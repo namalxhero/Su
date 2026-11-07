@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application") version "8.5.0"
     id("org.jetbrains.kotlin.android") version "1.9.24"
+    id("com.google.devtools.ksp") version "1.9.24-1.0.20"
 }
 
 android {
@@ -55,4 +56,37 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.lifecycle:lifecycle-service:2.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
 }
+
+/*
+ * Phase 3 continued fix: kernel/include/su_uapi.h is the single source
+ * of truth for the kernel<->userspace ABI (ioctl numbers, struct
+ * layout). Instead of hand-duplicating it in su_native.cpp (a drift
+ * risk flagged in Phase 3's design doc), copy it verbatim into the
+ * native source tree before every native build.
+ */
+val uapiHeaderSrc = rootProject.file("../kernel/include/su_uapi.h")
+val uapiHeaderDestDir = file("src/main/cpp/generated")
+
+tasks.register<Copy>("syncUapiHeader") {
+    description = "Copies kernel/include/su_uapi.h into cpp/generated/ so " +
+        "su_native.cpp includes the kernel module's real ABI header " +
+        "instead of a hand-duplicated copy."
+    from(uapiHeaderSrc)
+    into(uapiHeaderDestDir)
+    onlyIf {
+        if (!uapiHeaderSrc.exists()) {
+            logger.warn("su_uapi.h not found at $uapiHeaderSrc - skipping sync; " +
+                "su_native.cpp will use whatever copy is already in cpp/generated/.")
+        }
+        uapiHeaderSrc.exists()
+    }
+}
+
+tasks.matching { it.name.startsWith("externalNativeBuild") || it.name == "preBuild" }
+    .configureEach { dependsOn("syncUapiHeader") }

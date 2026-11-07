@@ -7,9 +7,10 @@ as reference; all code here is original.
 
 ## Status
 
-🚧 **Early development — Phase 2 (kernel module skeleton).** Not yet
-functional end-to-end. See `docs/PHASE1_DESIGN.md` for the architecture
-decisions this skeleton implements.
+🚧 **Phase 3 (manager app) in progress.** Kernel module skeleton (Phase 2)
+and manager app (Phase 3) both exist; neither has been validated on a
+real device yet. See `docs/PHASE1_DESIGN.md` for the architecture
+decisions and `docs/PHASE3_DESIGN.md` for the manager app's status.
 
 ## Project scope
 
@@ -17,12 +18,15 @@ decisions this skeleton implements.
 - **This repo provides:**
   - `kernel/` — the out-of-tree kernel module source (su hook +
     allowlist + Magisk-module mount support, the latter not yet started).
-  - A manager app (separate build target, Kotlin/Compose) — not yet in
-    this repo.
+  - `manager/` — the Kotlin/Compose manager app (JNI bridge to the
+    kernel module, Room-backed allowlist, Allow/Deny grant prompt).
 - **This repo does NOT provide:** a prebuilt kernel or a flashable image.
   Integrating `kernel/` into your own kernel source tree, building it,
   and flashing the result is up to you. See "Integration" below
   (to be filled in as the module stabilises).
+- **CI:** `.github/workflows/manager-build.yml` builds the manager app's
+  debug APK on every push to `manager/` (no Gradle wrapper needed - see
+  `manager/README.md`).
 
 ## Repository layout
 
@@ -32,10 +36,12 @@ decisions this skeleton implements.
 | `kernel/su_hook.c` | Hook framework (kprobe-based) + execve interception |
 | `kernel/su_allowlist.c` | Hybrid UID allowlist cache |
 | `kernel/su_ioctl.c` | `/dev/su_ctl` character device (manager-app ↔ kernel channel) |
-| `kernel/include/su_uapi.h` | ioctl ABI shared with userspace |
+| `kernel/include/su_uapi.h` | ioctl ABI shared with userspace - single source of truth, synced into `manager/` at build time |
 | `kernel/include/su_common.h` | Internal kernel-module-only declarations |
 | `kernel/Kbuild` | Out-of-tree build file |
+| `manager/` | Kotlin/Compose manager app - see `manager/README.md` |
 | `docs/PHASE1_DESIGN.md` | Architecture decisions from the design phase |
+| `docs/PHASE3_DESIGN.md` | Manager app status and remaining gaps |
 
 ## Integration (draft — will be expanded once the hook point is validated)
 

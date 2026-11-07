@@ -1,58 +1,76 @@
 package com.namalxhero.su.daemon
 
 import android.content.Context
+import com.namalxhero.su.db.AllowlistEntry
+import com.namalxhero.su.db.GrantType
+import com.namalxhero.su.db.SuDatabase
 import com.namalxhero.su.native.SuNative
+import com.namalxhero.su.util.AppInfoResolver
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Source of truth for *persistent* allowlist policy (Phase 1 design:
  * "manager app is the source of truth, kernel cache is just a fast
- * runtime mirror"). Backed by SharedPreferences for this skeleton -
- * TODO(Phase 3 continued): move to Room/SQLite once the schema needs
- * more than {uid -> granted}, e.g. per-app labels, grant timestamps,
- * session-vs-permanent distinction surfaced in the UI.
+ * runtime mirror"). Backed by Room (Phase 3 continued: moved off
+ * SharedPreferences now that the schema carries label, package name,
+ * grant type and timestamp - more than a bare {uid -> granted} map).
+ *
+ * All methods are suspend except [observeGranted] (a Flow, safe to
+ * collect from Compose) - callers must invoke from a coroutine scope,
+ * never the main thread directly.
  */
 class AllowlistRepository(context: Context) {
 
-    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val dao = SuDatabase.get(context).allowlistDao()
+    private val resolver = AppInfoResolver(context)
 
-    fun grant(uid: Int) {
-        prefs.edit().putBoolean(key(uid), true).apply()
-        pushToKernel(uid, GRANT_PERMANENT)
+    /** Live view of the allowlist, newest grant first - safe to collect in Compose. */
+    fun observeGranted(): Flow<List<AllowlistEntry>> = dao.observeAll()
+
+    suspend fun grant(uid: Int, type: GrantType = GrantType.PERMANENT) {
+        val resolved = resolver.resolve(uid)
+        dao.upsert(
+            AllowlistEntry(
+                uid = uid,
+                packageName = resolved.packageName,
+                label = resolved.label,
+                grantType = type,
+                grantedAtMillis = System.currentTimeMillis(),
+            )
+        )
+        pushToKernel(uid, type)
     }
 
-    fun revoke(uid: Int) {
-        prefs.edit().remove(key(uid)).apply()
+    suspend fun revoke(uid: Int) {
+        dao.deleteByUid(uid)
         SuNative.revokeUid(uid)
     }
 
-    fun isGranted(uid: Int): Boolean = prefs.getBoolean(key(uid), false)
+    suspend fun isGranted(uid: Int): Boolean = dao.getByUid(uid) != null
 
-    fun grantedUids(): List<Int> =
-        prefs.all.keys
-            .filter { it.startsWith(KEY_PREFIX) }
-            .mapNotNull { it.removePrefix(KEY_PREFIX).toIntOrNull() }
+    suspend fun grantedUids(): List<Int> = dao.getAll().map { it.uid }
 
     /** Called once at boot (SuDaemonService.onCreate) to re-sync the
      * kernel's in-memory cache, which is wiped on every module reload. */
-    fun pushAllToKernel() {
-        grantedUids().forEach { uid -> pushToKernel(uid, GRANT_PERMANENT) }
+    suspend fun pushAllToKernel() {
+        dao.getAll().forEach { entry -> pushToKernel(entry.uid, entry.grantType) }
     }
 
-    private fun pushToKernel(uid: Int, flags: Int) {
+    /** Result of a kernel push, surfaced to callers instead of being swallowed
+     * (Phase 3 continued fix: the daemon now logs + can notify on failure). */
+    sealed interface PushResult {
+        data object Ok : PushResult
+        data class Failed(val uid: Int, val errno: Int) : PushResult
+    }
+
+    private fun pushToKernel(uid: Int, type: GrantType): PushResult {
+        val flags = if (type == GrantType.SESSION) FLAG_SESSION else FLAG_PERMANENT
         val ret = SuNative.grantUid(uid, flags)
-        if (ret < 0) {
-            // TODO(Phase 3 continued): surface this failure somewhere
-            // visible (notification?) instead of swallowing it - a
-            // failed kernel push means the UI *thinks* the app is
-            // granted but the kernel disagrees.
-        }
+        return if (ret < 0) PushResult.Failed(uid, ret) else PushResult.Ok
     }
-
-    private fun key(uid: Int) = "$KEY_PREFIX$uid"
 
     companion object {
-        private const val PREFS_NAME = "su_allowlist"
-        private const val KEY_PREFIX = "uid_"
-        private const val GRANT_PERMANENT = 0x1 // mirrors SU_GRANT_PERMANENT
+        private const val FLAG_PERMANENT = 0x1 // mirrors SU_GRANT_PERMANENT
+        private const val FLAG_SESSION = 0x2   // mirrors SU_GRANT_SESSION
     }
 }

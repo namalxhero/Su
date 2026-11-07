@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Su Manager</string>
+
+    <!-- Main screen -->
+    <string name="main_title">Su</string>
+    <string name="main_subtitle">Root manager</string>
+    <string name="status_card_title">Module status</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Not detected</string>
+    <string name="status_api_version">API version %1$d</string>
+    <string name="status_allowlist_capacity">Allowlist capacity: %1$d</string>
+    <string name="action_start_daemon">Start daemon</string>
+    <string name="section_granted_apps">Granted apps</string>
+    <string name="empty_granted_apps">No apps have been granted root access yet.</string>
+    <string name="action_revoke">Revoke</string>
+    <string name="label_granted_permanent">Permanent</string>
+    <string name="label_granted_session">This session</string>
+
+    <!-- Grant prompt -->
+    <string name="grant_prompt_title">Root access requested</string>
+    <string name="grant_prompt_body">%1$s is requesting root access.</string>
+    <string name="grant_prompt_body_unknown">An app (uid %1$d) is requesting root access.</string>
+    <string name="action_allow">Allow</string>
+    <string name="action_deny">Deny</string>
+
+    <!-- Notification -->
+    <string name="daemon_notification_title">Su is active</string>
+    <string name="daemon_notification_text">Watching for root requests</string>
+</resources>
