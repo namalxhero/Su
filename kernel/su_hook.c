@@ -31,7 +31,12 @@
  * reads the wrong register and casts garbage to struct filename* -
  * silent memory corruption, not a build failure. kernel/Kbuild now
  * greps the target tree's fs/exec.c and defines SU_EXECVE_HAS_FD_ARG
- * accordingly; see su_is_su_client_call() below.
+ * accordingly; see su_extract_exec_path() below.
+ *
+ * Phase 4: su_execve_pre_handler now also forwards the exec path to
+ * su_boot_trigger_check() (su_boot_trigger.c) after the su-client
+ * check, so the one-shot "launch sud" boot hook piggybacks on this
+ * same kprobe instead of installing a second one on the same function.
  *
  * CAVEAT: still not validated against a real build (no reference kernel
  * tree in this repo to compile against - see README "Integration").
@@ -202,7 +207,13 @@ static void su_unregister_all_hooks(void)
 	hook_count = 0;
 }
 
-static bool su_is_su_client_call(struct pt_regs *regs)
+/*
+ * Returns the execve target path for this call, or NULL if it can't be
+ * read (bad/error pointer). Shared by the su-client check and (Phase 4)
+ * the boot-trigger check below, instead of each re-deriving it from
+ * regs with its own copy of the SU_EXECVE_HAS_FD_ARG logic.
+ */
+static const char *su_extract_exec_path(struct pt_regs *regs)
 {
 #ifdef CONFIG_ARM64
 	struct filename *fname;
@@ -214,9 +225,9 @@ static bool su_is_su_client_call(struct pt_regs *regs)
 #endif
 
 	if (!fname || IS_ERR(fname) || !fname->name)
-		return false;
+		return NULL;
 
-	return strcmp(fname->name, SU_CLIENT_PATH) == 0;
+	return fname->name;
 #else
 #error "su_hook.c's register-based argument extraction is arm64-only for now."
 #endif
@@ -224,10 +235,19 @@ static bool su_is_su_client_call(struct pt_regs *regs)
 
 static int su_execve_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 {
+	const char *exec_path = su_extract_exec_path(regs);
 	uid_t uid;
 	u32 flags;
 
-	if (!su_is_su_client_call(regs))
+	if (!exec_path)
+		return 0;
+
+	/* Phase 4: one-shot boot hook, independent of the su-client check
+	 * below (an exec_path can only match one of the two, but both
+	 * checks are cheap string compares either way). */
+	su_boot_trigger_check(exec_path);
+
+	if (strcmp(exec_path, SU_CLIENT_PATH) != 0)
 		return 0;
 
 	uid = current_uid().val;

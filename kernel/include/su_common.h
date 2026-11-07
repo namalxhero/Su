@@ -1,7 +1,7 @@
 /*
  * su_common.h - internal kernel-module-only declarations shared between
- * su_main.c, su_hook.c, su_allowlist.c and su_ioctl.c.
- * Not exposed to userspace (see su_uapi.h for that).
+ * su_main.c, su_hook.c, su_allowlist.c, su_ioctl.c and
+ * su_boot_trigger.c. Not exposed to userspace (see su_uapi.h for that).
  */
 #ifndef _SU_COMMON_H
 #define _SU_COMMON_H
@@ -39,6 +39,13 @@ void su_hooks_uninstall(void);
 /* Symbol resolution via the kallsyms_lookup_name kprobe trick, exposed
  * for future hook backends (syscall-table patch, manual source hook). */
 unsigned long su_lookup_symbol(const char *name);
+
+/* ---- Phase 4: one-shot boot-stage trigger (su_boot_trigger.c) ----
+ * Called from su_hook.c's existing do_execveat_common pre_handler (not
+ * a separate kprobe - see su_boot_trigger.c's file comment) with the
+ * path of whatever /init just execve'd. No-ops after it has already
+ * fired once this boot. */
+void su_boot_trigger_check(const char *exec_path);
 
 /* ---- ioctl device node (su_ioctl.c) ---- */
 
