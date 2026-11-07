@@ -1,7 +1,8 @@
 /*
  * su_common.h - internal kernel-module-only declarations shared between
- * su_main.c, su_hook.c, su_allowlist.c, su_ioctl.c and
- * su_boot_trigger.c. Not exposed to userspace (see su_uapi.h for that).
+ * su_main.c, su_hook.c, su_allowlist.c, su_ioctl.c, su_boot_trigger.c,
+ * su_hide.c and su_mount_isolate.c. Not exposed to userspace (see
+ * su_uapi.h for that).
  */
 #ifndef _SU_COMMON_H
 #define _SU_COMMON_H
@@ -37,7 +38,8 @@ int  su_hooks_install(void);
 void su_hooks_uninstall(void);
 
 /* Symbol resolution via the kallsyms_lookup_name kprobe trick, exposed
- * for future hook backends (syscall-table patch, manual source hook). */
+ * for future hook backends (syscall-table patch, manual source hook,
+ * su_mount_isolate.c's copy_mnt_ns resolution). */
 unsigned long su_lookup_symbol(const char *name);
 
 /* ---- Phase 4: one-shot boot-stage trigger (su_boot_trigger.c) ----
@@ -46,6 +48,25 @@ unsigned long su_lookup_symbol(const char *name);
  * path of whatever /init just execve'd. No-ops after it has already
  * fired once this boot. */
 void su_boot_trigger_check(const char *exec_path);
+
+/* ---- Phase 5: path visibility (su_hide.c) ----
+ * Visibility is gated on the same su_allowlist_check() used for su
+ * grants - see docs/PHASE5_DESIGN.md "Allowlist-check reuse". */
+int  su_hide_init(void);
+void su_hide_exit(void);
+int  su_hooks_install_hide(void);   /* installs the vfs_statx + getdents64 kretprobes */
+void su_hooks_uninstall_hide(void);
+int  su_hide_add_path(const char *path, bool subtree);
+int  su_hide_remove_path(const char *path);
+bool su_hide_path_is_hidden(const char *path);
+
+/* ---- Phase 5: per-task mount namespace isolation (su_mount_isolate.c) ----
+ * Called from su_hook.c's execve pre_handler, alongside the boot
+ * trigger check - see that file's header comment for the high-risk
+ * caveat around unexported copy_mnt_ns resolution. */
+int  su_mount_isolate_init(void);
+void su_mount_isolate_exit(void);
+void su_mount_isolate_check(uid_t uid);
 
 /* ---- ioctl device node (su_ioctl.c) ---- */
 

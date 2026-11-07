@@ -38,6 +38,12 @@
  * check, so the one-shot "launch sud" boot hook piggybacks on this
  * same kprobe instead of installing a second one on the same function.
  *
+ * Phase 5: su_execve_pre_handler also calls su_mount_isolate_check()
+ * (su_mount_isolate.c) for every execve, not just su_client calls -
+ * mount-namespace isolation needs to apply to ordinary app launches
+ * (that's the whole point: non-allowlisted apps shouldn't see Phase 4's
+ * module mounts), not just su requests. See docs/PHASE5_DESIGN.md.
+ *
  * CAVEAT: still not validated against a real build (no reference kernel
  * tree in this repo to compile against - see README "Integration").
  * Treat the task_work-based deferral and the fd-arg detection as
@@ -247,10 +253,18 @@ static int su_execve_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 	 * checks are cheap string compares either way). */
 	su_boot_trigger_check(exec_path);
 
+	/*
+	 * Phase 5: runs for EVERY execve, not gated on exec_path matching
+	 * su_client - mount isolation is a per-task, per-app concern, not
+	 * a su-request concern. su_mount_isolate_check() internally
+	 * no-ops for allowlisted UIDs and for tasks already isolated, so
+	 * this is cheap on the common (already-handled) path.
+	 */
+	uid = current_uid().val;
+	su_mount_isolate_check(uid);
+
 	if (strcmp(exec_path, SU_CLIENT_PATH) != 0)
 		return 0;
-
-	uid = current_uid().val;
 
 	if (su_allowlist_check(uid, &flags)) {
 		su_log("uid=%u has grant (flags=0x%x), queuing elevation\n", uid, flags);

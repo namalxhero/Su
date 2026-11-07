@@ -18,7 +18,9 @@ su_core-objs := \
 	su_hook.o \
 	su_allowlist.o \
 	su_ioctl.o \
-	su_boot_trigger.o
+	su_boot_trigger.o \
+	su_hide.o \
+	su_mount_isolate.o
 
 ccflags-y += -I$(src)/include -Wall
 
