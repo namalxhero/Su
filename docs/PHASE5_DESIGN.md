@@ -38,14 +38,32 @@ Deferred via the same `task_work_add()` pattern used for credential
 elevation in Phase 2 (mount/namespace operations can sleep; this can't
 happen inside the execve kprobe's atomic pre_handler).
 
-**Known high risk, called out explicitly:** the kernel functions that
-actually do this (`copy_mnt_ns`-equivalent internals) are typically
-**not `EXPORT_SYMBOL`'d** for module use. This file resolves them via
-the same `su_lookup_symbol()` kallsyms trick already used elsewhere in
-this codebase (`su_hook.c`), which works only if kallsyms exposes them
-and nothing (CFI, a kprobe blacklist, `lockdown`) blocks calling an
-unexported symbol pointer this way. This is the single most likely
-piece of Phase 5 to need rework once there's a real device to test on.
+**Implemented (not just namespace creation - the overlay is actually
+popped):** `su_mount_isolate.c` resolves `create_new_namespaces()` +
+`switch_task_namespaces()` to give the task its own mount namespace,
+then calls `path_umount()` once per entry in a mirrored copy of
+`daemon/sud.c`'s overlay-target list. This works without walking the
+mount tree because of how the overlay was applied in the first place:
+`sud` mounts each overlay *at* the real mountpoint (e.g. `/system`)
+rather than replacing it, so the original mount is still stacked
+underneath - popping the top (overlay) entry via a plain `umount`
+reveals it. "Undo the overlay" and "unmount once" are the same
+operation; see `su_unmount_overlay_targets()`'s comment for the detail.
+
+**Known high risk, called out explicitly:** every function this relies
+on (`create_new_namespaces`, `switch_task_namespaces`, `path_umount`) is
+an internal, typically **not `EXPORT_SYMBOL`'d** kernel symbol. Resolved
+via the same `su_lookup_symbol()` kallsyms trick already used elsewhere
+in this codebase (`su_hook.c`), which works only if kallsyms exposes
+them and nothing (CFI, a kprobe blacklist, `lockdown`) blocks calling an
+unexported symbol pointer this way. `path_umount()` itself is a
+post-~5.9 refactor - older trees expose the equivalent as
+`do_umount(struct vfsmount *, int)` with a different calling
+convention, which this version does not attempt to support (degrades
+gracefully: namespace isolation still happens, the overlay just isn't
+popped, with a warning logged once at init). This remains the single
+most likely piece of Phase 5 to need rework once there's a real device
+to test on - written and reviewed, not proven.
 
 ### 2. Path-hiding hooks (hides the su binary/daemon/module files themselves)
 
