@@ -1,0 +1,17 @@
+# Kbuild - out-of-tree build file for GKI 2.0 kernels (5.10+).
+#
+# This module is NOT built standalone with a Makefile here; it is meant to
+# be placed under a kernel source tree's `drivers/` (or similar) directory,
+# referenced from that tree's top-level Kbuild/Makefile, and built as part
+# of a normal Android kernel build (bazel/build.sh or the legacy
+# build/build.sh flow). See ../README.md "Integration" section.
+
+obj-m += su_core.o
+
+su_core-objs := \
+	su_main.o \
+	su_hook.o \
+	su_allowlist.o \
+	su_ioctl.o
+
+ccflags-y += -I$(src)/include -Wall
