@@ -21,10 +21,45 @@ static struct cdev su_cdev;
 static struct class *su_class;
 static struct device *su_device;
 
-/* TODO(Phase 5): restrict who may open this node - right now permissions
- * come from the device node mode plus whatever group the manager app
- * daemon runs as; revisit with a proper capability/SELinux check once
- * the manager app's process identity is finalised. */
+/*
+ * FIX (Phase 2 review, #3 - critical): previously there was no caller
+ * check at all - any process that could open() the device node could
+ * issue SU_IOC_UID_GRANT and hand itself root. su_manager_uid now locks
+ * to whichever UID issues the first privileged ioctl after module load
+ * (expected to be the manager app's daemon, started at boot via
+ * BootReceiver, so it should win the race against other apps). Every
+ * other UID is rejected with -EPERM from then on.
+ *
+ * NOT a complete fix: it raises the bar from "any process" to
+ * "whichever process is first", which is a real improvement but not a
+ * hard guarantee against a malicious app that races the daemon at
+ * boot. The real fix is restricting the device node itself via an
+ * SELinux type plus verifying the manager app's signature/identity
+ * over the channel - tracked as Phase 5 work, not done here.
+ */
+static uid_t su_manager_uid = (uid_t)-1;
+static bool  su_manager_locked;
+static DEFINE_SPINLOCK(su_manager_lock);
+
+static bool su_ioctl_caller_is_manager(void)
+{
+	uid_t caller = current_uid().val;
+	unsigned long irqflags;
+	bool ok;
+
+	spin_lock_irqsave(&su_manager_lock, irqflags);
+	if (!su_manager_locked) {
+		su_manager_uid = caller;
+		su_manager_locked = true;
+		ok = true;
+		su_log("manager uid locked to %u (first privileged ioctl caller)\n", caller);
+	} else {
+		ok = (caller == su_manager_uid);
+	}
+	spin_unlock_irqrestore(&su_manager_lock, irqflags);
+
+	return ok;
+}
 
 static int su_dev_open(struct inode *inode, struct file *filp)
 {
@@ -39,6 +74,13 @@ static int su_dev_release(struct inode *inode, struct file *filp)
 static long su_dev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	void __user *uarg = (void __user *)arg;
+
+	/* SU_IOC_GET_VERSION stays open to everyone - it leaks no policy
+	 * state, and a would-be manager app needs to be able to probe it
+	 * before it has registered as the manager. Every other command is
+	 * manager-only (see su_ioctl_caller_is_manager() above). */
+	if (cmd != SU_IOC_GET_VERSION && !su_ioctl_caller_is_manager())
+		return -EPERM;
 
 	switch (cmd) {
 	case SU_IOC_UID_GRANT: {

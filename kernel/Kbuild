@@ -1,10 +1,15 @@
-# Kbuild - out-of-tree build file for GKI 2.0 kernels (5.10+).
+# Kbuild - out-of-tree build file.
 #
 # This module is NOT built standalone with a Makefile here; it is meant to
 # be placed under a kernel source tree's `drivers/` (or similar) directory,
 # referenced from that tree's top-level Kbuild/Makefile, and built as part
 # of a normal Android kernel build (bazel/build.sh or the legacy
 # build/build.sh flow). See ../README.md "Integration" section.
+#
+# Previously assumed GKI 2.0 (5.10+) only. After the Phase 2 review fixes,
+# do_execveat_common()'s argument layout is detected below instead of
+# assumed, so this also targets older trees (e.g. 3.18-based Exynos
+# kernels) - see su_hook.c's SU_EXECVE_HAS_FD_ARG usage.
 
 obj-m += su_core.o
 
@@ -15,3 +20,17 @@ su_core-objs := \
 	su_ioctl.o
 
 ccflags-y += -I$(src)/include -Wall
+
+# Detect do_execveat_common()'s signature in the target kernel tree: trees
+# derived from mainline ~4.x+ (including GKI 2.0) pass an explicit `int fd`
+# as the first argument; older trees (e.g. Samsung's 3.18-based Exynos
+# kernels - see do_execve_common() in fs/exec.c) do not, so `filename` is
+# argument #1 instead of #2. Getting this wrong means su_hook.c reads the
+# wrong register as a struct filename* - silent memory corruption, not a
+# build failure, so this check matters more than it looks.
+ifeq ($(shell grep -Eq "^(static )?int do_execveat_common\(int fd" $(srctree)/fs/exec.c 2>/dev/null; echo $$?),0)
+ccflags-y += -DSU_EXECVE_HAS_FD_ARG
+$(info -- su_core: do_execveat_common has fd arg, using regs->regs[1] for struct filename*)
+else
+$(info -- su_core: do_execveat_common has no fd arg (older tree), using regs->regs[0] for struct filename*)
+endif

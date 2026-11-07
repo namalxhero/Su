@@ -57,5 +57,5 @@ module_exit(su_module_exit);
  */
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("namalxhero");
-MODULE_DESCRIPTION("Universal root kernel module (su + Magisk-module-support) - Phase 2 skeleton");
-MODULE_VERSION("0.0.1-phase2");
+MODULE_DESCRIPTION("Universal root kernel module (su + Magisk-module-support) - Phase 2 skeleton, reviewed");
+MODULE_VERSION("0.0.2-phase2-reviewed");

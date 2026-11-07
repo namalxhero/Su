@@ -36,6 +36,10 @@ bool su_pop_pending_request(uid_t *uid_out);
 int  su_hooks_install(void);
 void su_hooks_uninstall(void);
 
+/* Symbol resolution via the kallsyms_lookup_name kprobe trick, exposed
+ * for future hook backends (syscall-table patch, manual source hook). */
+unsigned long su_lookup_symbol(const char *name);
+
 /* ---- ioctl device node (su_ioctl.c) ---- */
 
 int  su_ioctl_init(void);

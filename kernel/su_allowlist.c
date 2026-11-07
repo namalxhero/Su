@@ -12,8 +12,16 @@
  *   - When su_hook.c sees a UID that is NOT in this cache, it does NOT
  *     block waiting for a decision (see Phase 1: "default deny +
  *     manual retry"). It denies immediately and records the UID here
- *     as a single-slot "pending request" that the daemon picks up via
- *     a blocking read / poll on the device node.
+ *     as a pending request that the daemon picks up via a blocking
+ *     read / poll on the device node.
+ *
+ * FIX (Phase 2 review, #7): this used to be a single pending-request
+ * slot, so two unknown UIDs requesting su close together would silently
+ * lose one. Replaced with a small ring buffer (SU_PENDING_QUEUE_SIZE
+ * entries). Still bounded - if the daemon falls behind long enough to
+ * fill it, su_notify_unknown_uid() drops the oldest entry to make room
+ * for the newest, on the assumption that a request just made is more
+ * likely to still matter to the user than one that's been waiting.
  */
 
 #include <linux/slab.h>
@@ -32,17 +40,21 @@ static struct su_allow_entry allow_table[SU_MAX_ALLOWLIST];
 static DEFINE_SPINLOCK(allow_lock);
 static int allow_count;
 
-/* single-slot pending "unknown uid requested su" notification */
+/* pending "unknown uid requested su" notification queue */
+#define SU_PENDING_QUEUE_SIZE 8
+
 DEFINE_WAIT_QUEUE_HEAD(su_request_waitq);
-static uid_t pending_uid;
-static bool  pending_valid;
+static uid_t pending_queue[SU_PENDING_QUEUE_SIZE];
+static int   pending_head;
+static int   pending_tail;
+static int   pending_len;
 static DEFINE_SPINLOCK(pending_lock);
 
 int su_allowlist_init(void)
 {
 	memset(allow_table, 0, sizeof(allow_table));
 	allow_count = 0;
-	pending_valid = false;
+	pending_head = pending_tail = pending_len = 0;
 	su_log("allowlist initialised (capacity=%d)\n", SU_MAX_ALLOWLIST);
 	return 0;
 }
@@ -133,8 +145,15 @@ void su_notify_unknown_uid(uid_t uid)
 	unsigned long irqflags;
 
 	spin_lock_irqsave(&pending_lock, irqflags);
-	pending_uid = uid;
-	pending_valid = true;
+	if (pending_len >= SU_PENDING_QUEUE_SIZE) {
+		/* Queue full: drop the oldest request to make room. */
+		pending_head = (pending_head + 1) % SU_PENDING_QUEUE_SIZE;
+		pending_len--;
+		su_warn("pending-request queue full, dropping oldest\n");
+	}
+	pending_queue[pending_tail] = uid;
+	pending_tail = (pending_tail + 1) % SU_PENDING_QUEUE_SIZE;
+	pending_len++;
 	spin_unlock_irqrestore(&pending_lock, irqflags);
 
 	wake_up_interruptible(&su_request_waitq);
@@ -146,10 +165,13 @@ bool su_pop_pending_request(uid_t *uid_out)
 	bool had_one;
 
 	spin_lock_irqsave(&pending_lock, irqflags);
-	had_one = pending_valid;
-	if (had_one && uid_out)
-		*uid_out = pending_uid;
-	pending_valid = false;
+	had_one = pending_len > 0;
+	if (had_one) {
+		if (uid_out)
+			*uid_out = pending_queue[pending_head];
+		pending_head = (pending_head + 1) % SU_PENDING_QUEUE_SIZE;
+		pending_len--;
+	}
 	spin_unlock_irqrestore(&pending_lock, irqflags);
 
 	return had_one;
