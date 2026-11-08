@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Required (as of API 34) for NotificationCompat.Builder's
+         setFullScreenIntent() to actually be allowed to launch
+         GrantPromptActivity fullscreen from the background - see
+         SuDaemonService.showGrantNotification(). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:label="Su Manager"
@@ -22,14 +27,20 @@
         </activity>
 
         <!-- Shown over other apps when an unknown UID requests su.
-             TODO(Phase 3 continued): needs SYSTEM_ALERT_WINDOW handling or
-             a high-priority notification + full-screen intent, depending
-             on what's reliable across OEM skins - revisit once we can
-             test on a real device. -->
+             Launched via SuDaemonService's full-screen-intent notification
+             (showGrantNotification()) rather than a direct startActivity()
+             call from the background - that direct call is what this
+             activity's old TODO here used to flag as unvalidated; replaced
+             with the documented/supported fullscreen-intent mechanism.
+             showWhenLocked + turnScreenOn so a request that arrives while
+             the device is locked still surfaces instead of silently
+             queuing behind the lock screen. -->
         <activity
             android:name=".ui.GrantPromptActivity"
             android:exported="false"
             android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:theme="@style/Theme.SuManager.Dialog" />
 
         <service

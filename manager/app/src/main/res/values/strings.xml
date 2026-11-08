@@ -27,4 +27,5 @@
     <!-- Notification -->
     <string name="daemon_notification_title">Su is active</string>
     <string name="daemon_notification_text">Watching for root requests</string>
+    <string name="grant_channel_name">Root access requests</string>
 </resources>
