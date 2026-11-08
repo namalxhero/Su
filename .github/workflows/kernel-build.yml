@@ -27,8 +27,44 @@
 #   - v3.18:  pre-execveat - no `fd` argument
 #   - v6.6:   has the `int fd` argument
 #
-# NOT YET RUN - written and reviewed, same standing caveat as the rest
-# of this kernel tree. First real run is the actual validation step.
+# FIRST REAL RUN RESULTS (reproduced locally, not just in CI, before this
+# fix): both matrix legs failed, for two unrelated reasons that this
+# version of the workflow fixes:
+#
+#   - vanilla-v3.18: fails to configure at all with Ubuntu's current
+#     apt gcc-aarch64-linux-gnu (GCC 13) - "fatal error:
+#     linux/compiler-gcc13.h: No such file or directory". v3.18's
+#     compiler-gcc.h dispatch only ships gcc3/4/5 compat headers; this
+#     is a genuine, well-known old-kernel-vs-modern-GCC incompatibility,
+#     not a bug in kernel/ itself. Fixed by using an older prebuilt
+#     cross-toolchain (Linaro 7.5.0) for this leg only, instead of
+#     fighting GCC13 compatibility in a 2014 kernel tree.
+#   - vanilla-v6.6: kernel/Kbuild's do_execveat_common() detection used
+#     an inline `$(shell grep -E "...(...)..." ...)` whose regex's own
+#     literal parens broke GNU Make's paren-counting for the enclosing
+#     $(shell ...)/ifeq(...) call ("invalid syntax in conditional") -
+#     fixed by moving that regex into kernel/scripts/detect-execve-fd-arg.sh,
+#     which Kbuild now calls by path (no parens in a path). Once that
+#     was fixed, two more issues surfaced in actual compilation:
+#     su_allowlist.c used a macro that doesn't exist (`DEFINE_WAIT_QUEUE_HEAD`
+#     - the real one is `DECLARE_WAIT_QUEUE_HEAD`) and was missing
+#     `<linux/sched.h>`; su_hide.c used fget()/fput() without
+#     `<linux/file.h>`. All three are now fixed in kernel/*.c directly.
+#
+# Both legs also hit the same build-infra issue once the code itself
+# compiled: modpost errors on every kernel-internal symbol (printk,
+# kfree, ...) as "undefined", because this workflow only runs
+# `modules_prepare` (fast - prepares headers/scripts) rather than a full
+# `make modules` of the whole tree (slow - would also populate
+# Module.symvers with every vmlinux-exported symbol's version info).
+# Those symbols are real and do exist in vmlinux at actual build/link
+# time on a real kernel build; modpost here just doesn't have their
+# versions recorded without a full build it can't afford to do for a
+# "does this still compile" check. KBUILD_MODPOST_WARN=1 downgrades
+# that from a hard error to a warning, which is the right tradeoff for
+# this workflow's own stated goal (compiles cleanly against both API
+# shapes) - it is NOT appropriate for an actual flashable-kernel build,
+# which goes through a full tree build and has no such gap.
 
 name: Kernel module build check
 
@@ -58,11 +94,17 @@ jobs:
             # upstream - not any device's own defconfig.
             defconfig: defconfig
             expect_fd_arg: "false"
+            # v3.18 (2014) does not compile with the apt-provided GCC
+            # 13 cross-compiler on current runners - see this file's
+            # header comment. Use a period-appropriate prebuilt
+            # instead; this leg alone needs it.
+            toolchain: linaro-7.5
           - name: vanilla-v6.6
             kernel_repo: torvalds/linux
             kernel_ref: v6.6
             defconfig: defconfig
             expect_fd_arg: "true"
+            toolchain: apt
 
     steps:
       - name: Checkout this repo
@@ -76,31 +118,62 @@ jobs:
           path: target-kernel
           fetch-depth: 1
 
-      - name: Install cross toolchain + kernel build deps
+      - name: Install kernel build deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            bc bison flex libssl-dev libelf-dev make
+          sudo apt-get install -y -qq bc bison flex libssl-dev libelf-dev make
+
+      - name: Install cross toolchain (apt, GCC 13)
+        if: matrix.toolchain == 'apt'
+        run: |
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          echo "CROSS_COMPILE_BIN=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+
+      - name: Install cross toolchain (Linaro 7.5.0 - for pre-GCC6-era trees)
+        if: matrix.toolchain == 'linaro-7.5'
+        run: |
+          curl -fsSL -o /tmp/linaro.tar.xz \
+            https://releases.linaro.org/components/toolchain/binaries/latest-7/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
+          mkdir -p /opt/linaro
+          tar -xf /tmp/linaro.tar.xz -C /opt/linaro --strip-components=1
+          echo "/opt/linaro/bin" >> "$GITHUB_PATH"
+          echo "CROSS_COMPILE_BIN=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
       - name: Configure target kernel (${{ matrix.defconfig }})
         working-directory: target-kernel
         run: |
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=../build ${{ matrix.defconfig }}
+          make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build ${{ matrix.defconfig }}
 
-      - name: modules_prepare (generates headers/Module.symvers our module builds against)
+      - name: modules_prepare (generates headers our module builds against)
         working-directory: target-kernel
         run: |
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=../build modules_prepare
+          make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build modules_prepare
 
+      # KBUILD_MODPOST_WARN=1: see this file's header comment - this
+      # workflow never runs a full `make modules` of the whole target
+      # tree (too slow to do twice per push), so Module.symvers never
+      # gets populated with vmlinux-exported symbol versions, and
+      # modpost would otherwise hard-fail on every kernel-internal
+      # symbol our module calls (printk, kfree, ...) as "undefined",
+      # even though they trivially exist at real build/link time.
       - name: Build su_core.ko out-of-tree
         run: |
           make -C target-kernel O=$PWD/build M=$PWD/kernel ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- modules 2>&1 | tee build.log
+            CROSS_COMPILE=${CROSS_COMPILE_BIN} KBUILD_MODPOST_WARN=1 \
+            modules 2>&1 | tee build.log
 
+      # NOTE: su_core.ko lands in kernel/ itself (the M= directory), NOT
+      # under build/kernel/ - the O= output dir only applies to the
+      # *target kernel tree's* own build artifacts (set during configure
+      # and modules_prepare above); the external module build (M=$PWD/kernel,
+      # no O= override) drops its .ko alongside the module's own sources.
+      # Verified by actually building both matrix legs locally, not
+      # assumed - an earlier version of this workflow checked
+      # build/kernel/su_core.ko here and always reported "not found",
+      # even on a leg whose compile had genuinely succeeded.
       - name: Confirm su_core.ko was produced
         run: |
-          find build/kernel -name 'su_core.ko' -print -quit | grep -q . \
+          find kernel -name 'su_core.ko' -print -quit | grep -q . \
             || { echo "::error::su_core.ko not found - build did not actually succeed"; exit 1; }
 
       - name: Confirm the correct SU_EXECVE_HAS_FD_ARG branch was taken
@@ -130,6 +203,6 @@ jobs:
         with:
           name: su_core-${{ matrix.name }}
           path: |
-            build/kernel/su_core.ko
+            kernel/su_core.ko
             build.log
           if-no-files-found: warn

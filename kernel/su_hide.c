@@ -28,6 +28,7 @@
 #include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/dirent.h>
+#include <linux/file.h>
 #include <linux/fs.h>
 #include "include/su_common.h"
 

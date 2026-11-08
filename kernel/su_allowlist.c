@@ -26,6 +26,7 @@
 
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/sched.h>
 #include <linux/wait.h>
 #include <linux/string.h>
 #include "su_common.h"
@@ -43,7 +44,10 @@ static int allow_count;
 /* pending "unknown uid requested su" notification queue */
 #define SU_PENDING_QUEUE_SIZE 8
 
-DEFINE_WAIT_QUEUE_HEAD(su_request_waitq);
+/* NOTE: it's DECLARE_WAIT_QUEUE_HEAD, not DEFINE_WAIT_QUEUE_HEAD - the
+ * latter doesn't exist; using it silently fell through to an implicit-int
+ * K&R-style declaration instead of actually declaring a wait queue. */
+DECLARE_WAIT_QUEUE_HEAD(su_request_waitq);
 static uid_t pending_queue[SU_PENDING_QUEUE_SIZE];
 static int   pending_head;
 static int   pending_tail;
