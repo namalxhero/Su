@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Su Manager</string>
+    <!-- Brand redesign: single-word "Su" (matches the project/binary's
+         own name, same single-word convention as Magisk/KernelSU),
+         replacing the more generic "Su Manager". -->
+    <string name="app_name">Su</string>
 
-    <!-- Main screen -->
+    <!-- Bottom navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_superuser">Superuser</string>
+    <string name="nav_modules">Modules</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Home screen -->
     <string name="main_title">Su</string>
     <string name="main_subtitle">Root manager</string>
     <string name="status_card_title">Module status</string>
@@ -10,12 +19,23 @@
     <string name="status_disconnected">Not detected</string>
     <string name="status_api_version">API version %1$d</string>
     <string name="status_allowlist_capacity">Allowlist capacity: %1$d</string>
-    <string name="action_start_daemon">Start daemon</string>
+    <string name="home_summary_granted">%1$d app(s) granted root</string>
+    <string name="home_summary_modules">%1$d module(s) active</string>
+    <string name="status_working">Working</string>
+    <string name="status_not_working">Not working</string>
+    <string name="status_working_sub">Su is active</string>
+    <string name="status_not_working_sub">Kernel module not detected</string>
+    <string name="status_daemon_installed">Daemon: installed</string>
+    <string name="status_daemon_not_installed">Daemon: not installed</string>
+    <string name="action_restart_daemon">Restart daemon</string>
+
+    <!-- Superuser screen -->
     <string name="section_granted_apps">Granted apps</string>
     <string name="empty_granted_apps">No apps have been granted root access yet.</string>
     <string name="action_revoke">Revoke</string>
     <string name="label_granted_permanent">Permanent</string>
     <string name="label_granted_session">This session</string>
+    <string name="superuser_visibility_note">Apps not granted here never see root or module changes by default - nothing to separately hide (see Phase 5 design: visibility follows this list automatically).</string>
 
     <!-- Grant prompt -->
     <string name="grant_prompt_title">Root access requested</string>
@@ -23,6 +43,23 @@
     <string name="grant_prompt_body_unknown">An app (uid %1$d) is requesting root access.</string>
     <string name="action_allow">Allow</string>
     <string name="action_deny">Deny</string>
+
+    <!-- Modules screen -->
+    <string name="modules_title">Modules</string>
+    <string name="modules_first_use_note">Reading modules needs root - the first time, allow the prompt (it is Su itself requesting access).</string>
+    <string name="modules_empty">No modules installed.</string>
+    <string name="modules_error">Couldn\'t read /data/adb/modules. Is the daemon running and has Su itself been granted root?</string>
+    <string name="modules_version_label">v%1$s</string>
+    <string name="action_retry">Retry</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_about">About</string>
+    <string name="settings_version_label">Version</string>
+    <string name="settings_section_module">Kernel module</string>
+    <string name="settings_root_path_label">su_client path</string>
+    <string name="settings_section_links">Project</string>
+    <string name="settings_view_source">View source on GitHub</string>
 
     <!-- Notification -->
     <string name="daemon_notification_title">Su is active</string>
