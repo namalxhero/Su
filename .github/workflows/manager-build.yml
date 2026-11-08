@@ -28,6 +28,19 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # FIX: the action's default is "tools platform-tools". Google
+          # removed the legacy 'tools' (standalone SDK Tools) package
+          # from the SDK repository; recent GitHub-hosted runner images
+          # ship an sdkmanager that can no longer resolve it at all, so
+          # the default fails the whole step with "Failed to find
+          # package 'tools'" before any Gradle step even runs - this
+          # isn't a problem with this project's own code. 'tools' had
+          # nothing this build needs anyway: everything it provided is
+          # superseded by the command line tools this action already
+          # puts on PATH regardless of `packages` (sdkmanager itself,
+          # d8/r8, etc.) - see android-actions/setup-android's own notes.
+          packages: "platform-tools"
 
       - name: Install NDK + CMake
         run: sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"

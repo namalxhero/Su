@@ -52,14 +52,14 @@ jobs:
       matrix:
         include:
           - name: vanilla-v3.18
-            kernel_repo: https://github.com/torvalds/linux
+            kernel_repo: torvalds/linux
             kernel_ref: v3.18
             # Generic in-tree arm64 defconfig that ships with vanilla
             # upstream - not any device's own defconfig.
             defconfig: defconfig
             expect_fd_arg: "false"
           - name: vanilla-v6.6
-            kernel_repo: https://github.com/torvalds/linux
+            kernel_repo: torvalds/linux
             kernel_ref: v6.6
             defconfig: defconfig
             expect_fd_arg: "true"
