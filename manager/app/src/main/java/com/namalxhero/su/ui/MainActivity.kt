@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
@@ -67,6 +69,7 @@ import com.namalxhero.su.native.SuNative
 import com.namalxhero.su.ui.theme.GhostMascot
 import com.namalxhero.su.ui.theme.GhostState
 import com.namalxhero.su.ui.theme.GlassBackground
+import com.namalxhero.su.ui.theme.GlassCircle
 import com.namalxhero.su.ui.theme.GlassSurface
 import com.namalxhero.su.ui.theme.SuGreen
 import com.namalxhero.su.ui.theme.SuGrey
@@ -150,8 +153,13 @@ private fun AppScaffold(
     val granted by allowlist.observeGranted().collectAsState(initial = emptyList())
     var status by remember { mutableStateOf<ModuleStatus?>(null) }
     var daemonInstalled by remember { mutableStateOf<Boolean?>(null) }
+    // Bumped by the Home "Self check" tile to force a fresh status read
+    // (the design reference's grid includes a "Self check / Test root"
+    // tile - this is what it actually does here).
+    var recheckTick by remember { mutableStateOf(0) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(recheckTick) {
+        status = null
         status = withContext(Dispatchers.IO) {
             val info = SuNative.getVersionInfo()
             val connected = info.isNotEmpty() && info[0] >= 0
@@ -216,6 +224,8 @@ private fun AppScaffold(
                         status = status,
                         daemonInstalled = daemonInstalled,
                         grantedCount = granted.size,
+                        onNavigate = { selected = it },
+                        onRecheck = { recheckTick++ },
                     )
                     Destination.SUPERUSER -> SuperuserScreen(allowlist = allowlist, granted = granted)
                     Destination.MODULES -> ModulesScreen(repository = moduleRepository)
@@ -235,8 +245,24 @@ private fun navItemColors() = NavigationBarItemDefaults.colors(
     indicatorColor = Color.White.copy(alpha = 0.10f),
 )
 
+/**
+ * Layout matches the uploaded design reference's Home screen: a top row
+ * (ghost logo badge left, two circular glass buttons right), a large
+ * glass hero card for root status + device info, then a 2-column grid
+ * of glass pill tiles. The reference's own grid labels (Apps, Modules,
+ * Self check, Kernel, Safe mode, Profiles) were trimmed to the four
+ * that map to something this app actually does - see each tile's
+ * onClick below - rather than shipping decorative tiles that go
+ * nowhere; "Kernel/Safe mode/Profiles" aren't features of this app.
+ */
 @Composable
-private fun HomeScreen(status: ModuleStatus?, daemonInstalled: Boolean?, grantedCount: Int) {
+private fun HomeScreen(
+    status: ModuleStatus?,
+    daemonInstalled: Boolean?,
+    grantedCount: Int,
+    onNavigate: (Destination) -> Unit,
+    onRecheck: () -> Unit,
+) {
     val ghostState = when {
         status == null || daemonInstalled == null -> GhostState.CHECKING
         status.connected -> GhostState.WORKING
@@ -244,46 +270,64 @@ private fun HomeScreen(status: ModuleStatus?, daemonInstalled: Boolean?, granted
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
-        Text(
-            stringResource(R.string.main_title),
-            style = MaterialTheme.typography.headlineMedium,
-            color = SuGreen,
-        )
-        Text(
-            stringResource(R.string.main_subtitle),
-            style = MaterialTheme.typography.bodyMedium,
-            color = SuGrey,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GlassCircle(size = 56.dp) {
+                GhostMascot(state = ghostState, size = 40.dp)
+            }
+            Spacer(Modifier.weight(1f))
+            GlassCircle(onClick = onRecheck) {
+                // "⟳" rather than Icons.Filled.Refresh: Refresh isn't
+                // confirmed present in material-icons-core (the lean
+                // set this project deliberately depends on instead of
+                // the much heavier material-icons-extended - see the
+                // Home/List/Lock/Settings import comment above), and a
+                // plain glyph avoids the risk entirely.
+                Text("⟳", color = Color.White, style = MaterialTheme.typography.titleMedium)
+            }
+            Spacer(Modifier.width(10.dp))
+            GlassCircle(onClick = { onNavigate(Destination.SETTINGS) }) {
+                Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.nav_settings), tint = Color.White)
+            }
+        }
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(18.dp))
 
-        GlassSurface(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(18.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                GhostMascot(state = ghostState, size = 64.dp)
-                Spacer(Modifier.width(16.dp))
-                Column {
+        GlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 32.dp) {
+            Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    GhostMascot(state = ghostState, size = 72.dp)
+                    Spacer(Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            when (ghostState) {
+                                GhostState.WORKING -> stringResource(R.string.status_working)
+                                GhostState.NOT_WORKING -> stringResource(R.string.status_not_working)
+                                GhostState.CHECKING -> "…"
+                            },
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White,
+                        )
+                        Text(
+                            if (ghostState == GhostState.WORKING)
+                                stringResource(R.string.status_working_sub)
+                            else stringResource(R.string.status_not_working_sub),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = SuGrey,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                HorizontalGlassDivider()
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Lock, contentDescription = null, tint = SuGrey, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        when (ghostState) {
-                            GhostState.WORKING -> stringResource(R.string.status_working)
-                            GhostState.NOT_WORKING -> stringResource(R.string.status_not_working)
-                            GhostState.CHECKING -> "…"
-                        },
-                        style = MaterialTheme.typography.titleLarge,
-                        color = when (ghostState) {
-                            GhostState.WORKING -> SuGreen
-                            GhostState.NOT_WORKING -> SuRed
-                            GhostState.CHECKING -> SuGrey
-                        },
-                    )
-                    Text(
-                        if (ghostState == GhostState.WORKING)
-                            stringResource(R.string.status_working_sub)
-                        else stringResource(R.string.status_not_working_sub),
+                        if (daemonInstalled == true)
+                            stringResource(R.string.status_daemon_installed)
+                        else stringResource(R.string.status_daemon_not_installed),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = SuGrey,
+                        color = if (daemonInstalled == true) SuGreen else SuRed,
                     )
                 }
             }
@@ -292,27 +336,97 @@ private fun HomeScreen(status: ModuleStatus?, daemonInstalled: Boolean?, granted
         Spacer(Modifier.height(14.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatTile(
+            GridTile(
                 modifier = Modifier.weight(1f),
-                label = if (daemonInstalled == true)
-                    stringResource(R.string.status_daemon_installed)
-                else stringResource(R.string.status_daemon_not_installed),
-                valueColor = if (daemonInstalled == true) SuGreen else SuRed,
+                leading = { Icon(Icons.Filled.Lock, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)) },
+                title = stringResource(R.string.home_tile_apps),
+                subtitle = stringResource(R.string.home_tile_apps_sub, grantedCount),
+                onClick = { onNavigate(Destination.SUPERUSER) },
             )
-            StatTile(
+            GridTile(
                 modifier = Modifier.weight(1f),
-                label = stringResource(R.string.home_summary_granted, grantedCount),
-                valueColor = SuGreen,
+                leading = { Icon(Icons.Filled.List, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)) },
+                title = stringResource(R.string.home_tile_modules),
+                subtitle = null,
+                onClick = { onNavigate(Destination.MODULES) },
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            GridTile(
+                modifier = Modifier.weight(1f),
+                leading = { Text("⟳", color = Color.White, style = MaterialTheme.typography.titleMedium) },
+                title = stringResource(R.string.home_tile_recheck),
+                subtitle = stringResource(R.string.home_tile_recheck_sub),
+                onClick = onRecheck,
+            )
+            GridTile(
+                modifier = Modifier.weight(1f),
+                leading = { Icon(Icons.Filled.Settings, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)) },
+                title = stringResource(R.string.home_tile_settings),
+                subtitle = stringResource(R.string.home_tile_settings_sub),
+                onClick = { onNavigate(Destination.SETTINGS) },
             )
         }
     }
 }
 
 @Composable
-private fun StatTile(modifier: Modifier = Modifier, label: String, valueColor: Color) {
-    GlassSurface(modifier = modifier) {
-        Box(modifier = Modifier.padding(14.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = valueColor)
+private fun HorizontalGlassDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(Color.White.copy(alpha = 0.16f))
+    )
+}
+
+/**
+ * One 2x1 grid pill - icon badge, title + optional subtitle, chevron -
+ * matches the reference's Apps/Modules/etc. tiles in shape and content
+ * arrangement. `leading` is a composable slot rather than a fixed
+ * ImageVector so callers can pass either a confirmed material-icons-core
+ * Icon or a plain glyph (see the "⟳" self-check tile below) without
+ * this function caring which - keeps GridTile itself independent of
+ * which icon set a given caller can safely use.
+ */
+@Composable
+private fun GridTile(
+    modifier: Modifier = Modifier,
+    leading: @Composable () -> Unit,
+    title: String,
+    subtitle: String?,
+    onClick: () -> Unit,
+) {
+    GlassSurface(modifier = modifier.clickable(onClick = onClick), cornerRadius = 30.dp) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(Color.White.copy(alpha = 0.22f), Color.White.copy(alpha = 0.04f)),
+                        )
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                leading()
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White, maxLines = 1)
+                if (subtitle != null) {
+                    Text(subtitle, style = MaterialTheme.typography.labelSmall, color = SuGrey, maxLines = 1)
+                }
+            }
+            // ">" rather than an ArrowForwardIos icon - same reasoning
+            // as the "⟳" self-check button: not confirmed present in
+            // material-icons-core.
+            Text(">", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

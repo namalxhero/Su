@@ -29,6 +29,18 @@
     <string name="status_daemon_not_installed">Daemon: not installed</string>
     <string name="action_restart_daemon">Restart daemon</string>
 
+    <!-- Home grid tiles (matches the uploaded design reference's 2-column
+         tile grid - labels adapted to this app's real destinations) -->
+    <string name="home_tile_apps">Apps</string>
+    <string name="home_tile_apps_sub">%1$d with root</string>
+    <string name="home_tile_modules">Modules</string>
+    <string name="home_tile_modules_sub">%1$d installed</string>
+    <string name="home_tile_recheck">Self check</string>
+    <string name="home_tile_recheck_sub">Test root</string>
+    <string name="home_tile_settings">Settings</string>
+    <string name="home_tile_settings_sub">About &amp; daemon</string>
+    <string name="home_hero_device_os">Android %1$s</string>
+
     <!-- Superuser screen -->
     <string name="section_granted_apps">Granted apps</string>
     <string name="empty_granted_apps">No apps have been granted root access yet.</string>
