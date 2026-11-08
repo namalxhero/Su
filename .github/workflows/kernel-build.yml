@@ -214,25 +214,6 @@ jobs:
           } > "${RUNNER_TEMP}/err.md" || true
           gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@"${RUNNER_TEMP}/err.md" || true
 
-      - name: Report build errors as a commit comment
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          {
-            echo "### ${{ matrix.name }}: build failed"
-            echo '```'
-            for f in "${RUNNER_TEMP}/prepare.log" build.log; do
-              if [ -f "$f" ]; then
-                echo "--- $f"
-                grep -n -E "error|Error|undefined|multiple definition|fatal|\*\*\*" "$f" | head -40 | cut -c1-300 || true
-              fi
-            done
-            echo '```'
-          } > "${RUNNER_TEMP}/err.md" || true
-          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@"${RUNNER_TEMP}/err.md" || true
-
       # NOTE: su_core.ko lands in kernel/ itself (the M= directory), NOT
       # under build/kernel/ - the O= output dir only applies to the
       # *target kernel tree's* own build artifacts (set during configure
