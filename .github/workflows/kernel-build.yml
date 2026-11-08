@@ -1,0 +1,135 @@
+# Kernel module build check (Phase 6).
+#
+# Compiles kernel/ as an out-of-tree module (`make M=...`) against two
+# REAL kernel trees, to actually catch compile errors instead of just
+# the brace/paren sanity checks this project has relied on so far (no
+# kernel source tree has been available in the environment these files
+# were written in - see every kernel/*.c file's own "not compiled
+# against a real build" caveat).
+#
+# IMPORTANT: this builds against plain upstream kernel.org (vanilla
+# mainline) tags, NOT any Android/device-specific kernel fork. This CI
+# exists to answer one question only - "does kernel/ compile cleanly
+# against both shapes of do_execveat_common's signature?" - not to
+# build, represent, or stand in for any real device's kernel. Building
+# the actual flashable kernel for a specific phone (device defconfig,
+# vendor patches, this module integrated into that tree) is the END
+# USER's own job, same as it's always been - see kernel/Kbuild's and
+# ../README.md's "Integration" notes. An earlier version of this
+# workflow referenced an Android GKI tree and a Samsung Exynos device
+# fork here, which wrongly implied this project does device-specific
+# kernel building; it doesn't, and shouldn't.
+#
+# do_execveat_common() is itself upstream (introduced for the
+# execveat() syscall, ~v3.19), not Android-specific, so vanilla tags on
+# either side of that are a clean, device-agnostic way to exercise both
+# SU_EXECVE_HAS_FD_ARG branches (see kernel/Kbuild):
+#   - v3.18:  pre-execveat - no `fd` argument
+#   - v6.6:   has the `int fd` argument
+#
+# NOT YET RUN - written and reviewed, same standing caveat as the rest
+# of this kernel tree. First real run is the actual validation step.
+
+name: Kernel module build check
+
+on:
+  push:
+    paths:
+      - 'kernel/**'
+      - '.github/workflows/kernel-build.yml'
+  pull_request:
+    paths:
+      - 'kernel/**'
+      - '.github/workflows/kernel-build.yml'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: vanilla-v3.18
+            kernel_repo: https://github.com/torvalds/linux
+            kernel_ref: v3.18
+            # Generic in-tree arm64 defconfig that ships with vanilla
+            # upstream - not any device's own defconfig.
+            defconfig: defconfig
+            expect_fd_arg: "false"
+          - name: vanilla-v6.6
+            kernel_repo: https://github.com/torvalds/linux
+            kernel_ref: v6.6
+            defconfig: defconfig
+            expect_fd_arg: "true"
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Checkout target kernel tree (${{ matrix.name }})
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.kernel_repo }}
+          ref: ${{ matrix.kernel_ref }}
+          path: target-kernel
+          fetch-depth: 1
+
+      - name: Install cross toolchain + kernel build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev make
+
+      - name: Configure target kernel (${{ matrix.defconfig }})
+        working-directory: target-kernel
+        run: |
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=../build ${{ matrix.defconfig }}
+
+      - name: modules_prepare (generates headers/Module.symvers our module builds against)
+        working-directory: target-kernel
+        run: |
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=../build modules_prepare
+
+      - name: Build su_core.ko out-of-tree
+        run: |
+          make -C target-kernel O=$PWD/build M=$PWD/kernel ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- modules 2>&1 | tee build.log
+
+      - name: Confirm su_core.ko was produced
+        run: |
+          find build/kernel -name 'su_core.ko' -print -quit | grep -q . \
+            || { echo "::error::su_core.ko not found - build did not actually succeed"; exit 1; }
+
+      - name: Confirm the correct SU_EXECVE_HAS_FD_ARG branch was taken
+        run: |
+          # kernel/Kbuild prints one of these two $(info ...) lines at
+          # configure time (see that file) - cross-check it against
+          # what this matrix entry's tree is supposed to have, so a
+          # silently-wrong detection doesn't slip through as a "pass".
+          if [ "${{ matrix.expect_fd_arg }}" = "true" ]; then
+            grep -q "has fd arg" build.log \
+              || { echo "::error::expected SU_EXECVE_HAS_FD_ARG to be set for ${{ matrix.name }}, but Kbuild did not detect it"; exit 1; }
+          else
+            grep -q "has no fd arg" build.log \
+              || { echo "::error::expected SU_EXECVE_HAS_FD_ARG to be UNSET for ${{ matrix.name }}, but Kbuild detected the fd-arg variant"; exit 1; }
+          fi
+
+      - name: Report compiler warnings (non-fatal)
+        if: always()
+        run: |
+          count=$(grep -c "warning:" build.log || true)
+          echo "## ${{ matrix.name }}: $count compiler warning(s)" >> "$GITHUB_STEP_SUMMARY"
+          grep "warning:" build.log >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload su_core.ko (for inspection only - not a flashable artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: su_core-${{ matrix.name }}
+          path: |
+            build/kernel/su_core.ko
+            build.log
+          if-no-files-found: warn
