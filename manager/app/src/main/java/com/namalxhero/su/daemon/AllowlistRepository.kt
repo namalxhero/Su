@@ -16,12 +16,15 @@ class AllowlistRepository(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun grant(uid: Int) {
-        prefs.edit().putBoolean(key(uid), true).apply()
+        prefs.edit()
+            .putBoolean(key(uid), true)
+            .putLong(tsKey(uid), System.currentTimeMillis())
+            .apply()
         pushToKernel(uid, GRANT_PERMANENT)
     }
 
     fun revoke(uid: Int) {
-        prefs.edit().remove(key(uid)).apply()
+        prefs.edit().remove(key(uid)).remove(tsKey(uid)).apply()
         SuNative.revokeUid(uid)
     }
 
@@ -31,6 +34,10 @@ class AllowlistRepository(context: Context) {
         prefs.all.keys
             .filter { it.startsWith(KEY_PREFIX) }
             .mapNotNull { it.removePrefix(KEY_PREFIX).toIntOrNull() }
+
+    /** When each currently-granted UID was granted (epoch millis; 0 if
+     * unknown, e.g. a grant written before this field existed). */
+    fun grantedAt(uid: Int): Long = prefs.getLong(tsKey(uid), 0L)
 
     /** Called once at boot (SuDaemonService.onCreate) to re-sync the
      * kernel's in-memory cache, which is wiped on every module reload. */
@@ -49,10 +56,12 @@ class AllowlistRepository(context: Context) {
     }
 
     private fun key(uid: Int) = "$KEY_PREFIX$uid"
+    private fun tsKey(uid: Int) = "$TS_PREFIX$uid"
 
     companion object {
         private const val PREFS_NAME = "su_allowlist"
         private const val KEY_PREFIX = "uid_"
+        private const val TS_PREFIX = "uid_ts_"
         private const val GRANT_PERMANENT = 0x1 // mirrors SU_GRANT_PERMANENT
     }
 }

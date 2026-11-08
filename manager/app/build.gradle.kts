@@ -6,6 +6,9 @@ plugins {
 android {
     namespace = "com.namalxhero.su"
     compileSdk = 34
+    // Pinned so a local build and the manager-build.yml CI job use the
+    // exact same NDK - avoids "works here, fails in CI" ABI drift.
+    ndkVersion = "26.1.10909125"
 
     defaultConfig {
         applicationId = "com.namalxhero.su"

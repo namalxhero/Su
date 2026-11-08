@@ -3,15 +3,9 @@
  *
  * This file owns the open()/ioctl()/read()/close() calls against the
  * kernel module's character device. The struct layout and ioctl command
- * numbers below MUST stay byte-for-byte identical to kernel/include/
- * su_uapi.h - that header is the single source of truth for this ABI.
- *
- * TODO(Phase 3 continued): stop duplicating the struct/macro definitions
- * here by hand. Options to evaluate: (a) a Gradle/CMake step that copies
- * kernel/include/su_uapi.h into this cpp/ directory at build time, or
- * (b) moving su_uapi.h to a location both the kernel Kbuild and this
- * CMakeLists.txt can include directly. Duplicated-by-hand is acceptable
- * for this skeleton but is a correctness risk if the two ever drift.
+ * numbers come straight from kernel/include/su_uapi.h (see CMakeLists.txt's
+ * include path) - that header is the single source of truth for this ABI,
+ * and is no longer duplicated here by hand.
  */
 
 #include <jni.h>
@@ -23,30 +17,11 @@
 #include <cstdint>
 #include <cstring>
 
+#include "su_uapi.h"
+
 #define LOG_TAG "SuNative"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
-
-static const char *SU_DEVICE_PATH = "/dev/su_ctl";
-static const uint8_t SU_IOC_MAGIC = 0xB4;
-
-/* Must mirror kernel/include/su_uapi.h exactly. */
-struct su_uid_entry {
-    uint32_t uid;
-    uint32_t flags;
-};
-
-struct su_version_info {
-    uint32_t api_version;
-    uint32_t max_allowlist;
-};
-
-#define SU_IOC_UID_GRANT   _IOW(SU_IOC_MAGIC, 1, su_uid_entry)
-#define SU_IOC_UID_REVOKE  _IOW(SU_IOC_MAGIC, 2, su_uid_entry)
-#define SU_IOC_UID_QUERY   _IOWR(SU_IOC_MAGIC, 3, su_uid_entry)
-#define SU_IOC_GET_VERSION _IOR(SU_IOC_MAGIC, 4, su_version_info)
-
-#define SU_GRANT_NONE 0x0
 
 static int open_su_device() {
     int fd = open(SU_DEVICE_PATH, O_RDWR);
@@ -62,8 +37,8 @@ Java_com_namalxhero_su_native_SuNative_grantUid(JNIEnv *, jobject, jint uid, jin
     if (fd < 0) return -1;
 
     su_uid_entry entry{};
-    entry.uid = static_cast<uint32_t>(uid);
-    entry.flags = static_cast<uint32_t>(flags);
+    entry.uid = static_cast<__u32>(uid);
+    entry.flags = static_cast<__u32>(flags);
 
     int ret = ioctl(fd, SU_IOC_UID_GRANT, &entry);
     if (ret < 0) {
@@ -79,7 +54,7 @@ Java_com_namalxhero_su_native_SuNative_revokeUid(JNIEnv *, jobject, jint uid) {
     if (fd < 0) return -1;
 
     su_uid_entry entry{};
-    entry.uid = static_cast<uint32_t>(uid);
+    entry.uid = static_cast<__u32>(uid);
 
     int ret = ioctl(fd, SU_IOC_UID_REVOKE, &entry);
     if (ret < 0) {
@@ -95,7 +70,7 @@ Java_com_namalxhero_su_native_SuNative_queryUid(JNIEnv *, jobject, jint uid) {
     if (fd < 0) return -1;
 
     su_uid_entry entry{};
-    entry.uid = static_cast<uint32_t>(uid);
+    entry.uid = static_cast<__u32>(uid);
     entry.flags = SU_GRANT_NONE;
 
     int ret = ioctl(fd, SU_IOC_UID_QUERY, &entry);
