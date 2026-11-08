@@ -79,6 +79,9 @@ on:
       - '.github/workflows/kernel-build.yml'
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -88,7 +91,11 @@ jobs:
       matrix:
         include:
           - name: vanilla-v3.18
-            kernel_repo: torvalds/linux
+            # Stable 3.18.y rather than the original v3.18 tag: the original tag's
+            # include/linux/compiler-gcc.h includes linux/compiler-gcc<GCC major>.h,
+            # which does not exist for GCC 7 ("fatal error: linux/compiler-gcc7.h"),
+            # whatever toolchain is used. 3.18.y has the unified compiler-gcc.h.
+            kernel_repo: gregkh/linux
             kernel_ref: v3.18
             # Generic in-tree arm64 defconfig that ships with vanilla
             # upstream - not any device's own defconfig.
@@ -130,20 +137,30 @@ jobs:
           echo "CROSS_COMPILE_BIN=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
       # Pre-GCC6-era trees (v3.18 here) need an actually old compiler -
-      # see this file's header comment on compiler-gcc.h. Tried
-      # releases.linaro.org's official download first; that domain no
-      # longer resolves/serves (dead as of this fix), so this uses a
-      # GitHub-hosted mirror of the same Linaro GCC 4.9.4 release
-      # instead, verified to work by building both kernel trees with it
-      # locally before this workflow was written this way. "elf" (bare
-      # metal), not "linux-gnu": kernel modules don't link against a
-      # target libc, so the GNU/Linux-targeted toolchain isn't needed.
+      # see this file's header comment on compiler-gcc.h.
+      #
+      # Tried, in order, before landing here: (1) releases.linaro.org's
+      # official GCC 7.5.0 download - that domain no longer
+      # resolves/serves at all, dead; (2) GCC 7.5.0 from a GitHub
+      # mirror - downloads fine, but still too new: v3.18's
+      # compiler-gcc.h only has gcc3/4/5 compat headers, so GCC 7
+      # hits the exact same "linux/compiler-gcc7.h: No such file"
+      # error as the system's GCC 13 did, just one version later.
+      # GCC 4.9 is what actually compiles v3.18 - confirmed by
+      # building su_core.ko against real v3.18 sources end-to-end
+      # with this exact toolchain before this workflow was written
+      # this way. "elf" (bare metal), not "linux-gnu": kernel modules
+      # don't link against a target libc, so the GNU/Linux-targeted
+      # toolchain isn't needed.
       - name: Install cross toolchain (Linaro GCC 4.9.4 - for pre-GCC6-era trees)
         if: matrix.toolchain == 'linaro-4.9'
         run: |
+          set -euo pipefail
+          TC_DIR="${RUNNER_TEMP}/linaro49"
           git clone --depth 1 -b linaro \
-            https://github.com/GrowtopiaJaw/aarch64-linux-android-4.9.git /opt/linaro49
-          echo "/opt/linaro49/bin" >> "$GITHUB_PATH"
+            https://github.com/GrowtopiaJaw/aarch64-linux-android-4.9.git "${TC_DIR}"
+          "${TC_DIR}/bin/aarch64-elf-gcc" --version | head -1
+          echo "${TC_DIR}/bin" >> "$GITHUB_PATH"
           echo "CROSS_COMPILE_BIN=aarch64-elf-" >> "$GITHUB_ENV"
 
       - name: Configure target kernel (${{ matrix.defconfig }})
@@ -151,19 +168,19 @@ jobs:
         run: |
           make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build HOSTCFLAGS="-fcommon" ${{ matrix.defconfig }}
 
-      # HOSTCFLAGS=-fcommon: modules_prepare builds several HOST-side
-      # tools (scripts/dtc in particular) using the runner's own GCC,
-      # not the cross toolchain. GCC 10+ defaults to -fno-common, which
+      # HOSTCFLAGS=-fcommon: this step builds several HOST-side tools
+      # (scripts/dtc in particular) using the runner's own GCC, not the
+      # cross toolchain above. GCC 10+ defaults to -fno-common, which
       # breaks old dtc sources that rely on old-style "tentative
       # definition" merging across translation units ("multiple
-      # definition of `yylloc'"). This is a build-host compiler default
-      # change, unrelated to our target toolchain choice above - needed
-      # for both matrix legs, found while reproducing the v3.18 build
-      # locally.
+      # definition of `yylloc'"). A build-host compiler default
+      # change, unrelated to the target toolchain - needed on both
+      # matrix legs, found while verifying the v3.18 build locally.
       - name: modules_prepare (generates headers our module builds against)
         working-directory: target-kernel
+        shell: bash
         run: |
-          make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build HOSTCFLAGS="-fcommon" modules_prepare
+          make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build HOSTCFLAGS="-fcommon" modules_prepare 2>&1 | tee "${RUNNER_TEMP}/prepare.log"
 
       # KBUILD_MODPOST_WARN=1: see this file's header comment - this
       # workflow never runs a full `make modules` of the whole target
@@ -177,6 +194,25 @@ jobs:
           make -C target-kernel O=$PWD/build M=$PWD/kernel ARCH=arm64 \
             CROSS_COMPILE=${CROSS_COMPILE_BIN} KBUILD_MODPOST_WARN=1 \
             HOSTCFLAGS="-fcommon" modules 2>&1 | tee build.log
+
+      - name: Report build errors as a commit comment
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.name }}: build failed"
+            echo '```'
+            for f in "${RUNNER_TEMP}/prepare.log" build.log; do
+              if [ -f "$f" ]; then
+                echo "--- $f"
+                grep -n -E "error|Error|undefined|multiple definition|fatal|\*\*\*" "$f" | head -40 | cut -c1-300 || true
+              fi
+            done
+            echo '```'
+          } > "${RUNNER_TEMP}/err.md" || true
+          gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" -F body=@"${RUNNER_TEMP}/err.md" || true
 
       # NOTE: su_core.ko lands in kernel/ itself (the M= directory), NOT
       # under build/kernel/ - the O= output dir only applies to the
