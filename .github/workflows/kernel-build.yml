@@ -91,8 +91,12 @@ jobs:
       matrix:
         include:
           - name: vanilla-v3.18
-            kernel_repo: torvalds/linux
-            kernel_ref: v3.18
+            # Stable 3.18.y rather than the original v3.18 tag: the original tag's
+            # include/linux/compiler-gcc.h includes linux/compiler-gcc<GCC major>.h,
+            # which does not exist for GCC 7 ("fatal error: linux/compiler-gcc7.h"),
+            # whatever toolchain is used. 3.18.y has the unified compiler-gcc.h.
+            kernel_repo: gregkh/linux
+            kernel_ref: v3.18.140
             # Generic in-tree arm64 defconfig that ships with vanilla
             # upstream - not any device's own defconfig.
             defconfig: defconfig
