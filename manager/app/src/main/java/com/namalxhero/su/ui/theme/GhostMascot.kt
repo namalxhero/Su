@@ -7,7 +7,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -93,9 +95,9 @@ fun GhostMascot(state: GhostState, modifier: Modifier = Modifier, size: Dp = 96.
             val scallop = bodyW / 3f
             relativeLineTo(0f, 0f)
             lineTo(right - scallop * 0.1f, bottomY)
-            quadraticTo(right - scallop * 0.5f, bottomY + h * 0.08f, right - scallop, bottomY)
-            quadraticTo(right - scallop * 1.5f, bottomY + h * 0.08f, right - scallop * 2f, bottomY)
-            quadraticTo(right - scallop * 2.5f, bottomY + h * 0.08f, left, bottomY)
+            quadraticBezierTo(right - scallop * 0.5f, bottomY + h * 0.08f, right - scallop, bottomY)
+            quadraticBezierTo(right - scallop * 1.5f, bottomY + h * 0.08f, right - scallop * 2f, bottomY)
+            quadraticBezierTo(right - scallop * 2.5f, bottomY + h * 0.08f, left, bottomY)
             close()
         }
         drawPath(path = path, color = bodyColor, style = Fill)
