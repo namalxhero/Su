@@ -132,11 +132,42 @@ jobs:
       - name: Install cross toolchain (Linaro 7.5.0 - for pre-GCC6-era trees)
         if: matrix.toolchain == 'linaro-7.5'
         run: |
-          curl -fsSL -o /tmp/linaro.tar.xz \
-            https://releases.linaro.org/components/toolchain/binaries/latest-7/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
-          mkdir -p /opt/linaro
-          tar -xf /tmp/linaro.tar.xz -C /opt/linaro --strip-components=1
-          echo "/opt/linaro/bin" >> "$GITHUB_PATH"
+          set -euo pipefail
+          FILE=gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
+          # Several sources, tried in order. A source only counts if what it served is a real xz archive:
+          # a mirror that answers 200 with an HTML page would otherwise make `tar` fail later with exit code 2.
+          URLS=(
+            "https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/aarch64-linux-gnu/${FILE}"
+            "https://releases.linaro.org/components/toolchain/binaries/latest-7/aarch64-linux-gnu/${FILE}"
+            "https://huggingface.co/csukuangfj/sherpa-ncnn-toolchains/resolve/main/${FILE}"
+          )
+          ARCHIVE="${RUNNER_TEMP}/linaro.tar.xz"
+          ok=0
+          for u in "${URLS[@]}"; do
+            echo "::group::Trying ${u}"
+            rm -f "${ARCHIVE}"
+            if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 30 -o "${ARCHIVE}" "${u}" \
+               && xz -t "${ARCHIVE}"; then
+              echo "OK: valid archive from ${u} ($(du -h "${ARCHIVE}" | cut -f1))"
+              ok=1
+              echo "::endgroup::"
+              break
+            fi
+            echo "Not usable: ${u}"
+            ls -l "${ARCHIVE}" 2>/dev/null || true
+            head -c 200 "${ARCHIVE}" 2>/dev/null | cat -v | head -3 || true
+            echo "::endgroup::"
+          done
+          if [ "${ok}" != 1 ]; then
+            echo "::error::Could not download a valid Linaro 7.5.0 toolchain from any of the sources"
+            exit 1
+          fi
+          TC_DIR="${RUNNER_TEMP}/linaro"
+          mkdir -p "${TC_DIR}"
+          tar -xf "${ARCHIVE}" -C "${TC_DIR}" --strip-components=1
+          rm -f "${ARCHIVE}"
+          "${TC_DIR}/bin/aarch64-linux-gnu-gcc" --version | head -1
+          echo "${TC_DIR}/bin" >> "$GITHUB_PATH"
           echo "CROSS_COMPILE_BIN=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
       - name: Configure target kernel (${{ matrix.defconfig }})
