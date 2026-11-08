@@ -53,14 +53,20 @@
 #include <linux/kernel.h>
 #include <linux/kprobes.h>
 #include <linux/sched.h>
+#include <linux/version.h>
+/* linux/sched/task.h (and the rest of the sched.h split) only exists
+ * from ~v4.11 onward; everything this file needs from it existed
+ * directly in linux/sched.h on older trees like Samsung's 3.18-based
+ * Exynos kernels. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 #include <linux/sched/task.h>
+#endif
 #include <linux/cred.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/fs.h>
 #include <linux/task_work.h>
-#include <linux/version.h>
 #include <linux/err.h>
 #include "su_common.h"
 

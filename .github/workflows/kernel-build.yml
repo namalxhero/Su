@@ -98,7 +98,7 @@ jobs:
             # 13 cross-compiler on current runners - see this file's
             # header comment. Use a period-appropriate prebuilt
             # instead; this leg alone needs it.
-            toolchain: linaro-7.5
+            toolchain: linaro-4.9
           - name: vanilla-v6.6
             kernel_repo: torvalds/linux
             kernel_ref: v6.6
@@ -129,25 +129,41 @@ jobs:
           sudo apt-get install -y -qq gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
           echo "CROSS_COMPILE_BIN=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
-      - name: Install cross toolchain (Linaro 7.5.0 - for pre-GCC6-era trees)
-        if: matrix.toolchain == 'linaro-7.5'
+      # Pre-GCC6-era trees (v3.18 here) need an actually old compiler -
+      # see this file's header comment on compiler-gcc.h. Tried
+      # releases.linaro.org's official download first; that domain no
+      # longer resolves/serves (dead as of this fix), so this uses a
+      # GitHub-hosted mirror of the same Linaro GCC 4.9.4 release
+      # instead, verified to work by building both kernel trees with it
+      # locally before this workflow was written this way. "elf" (bare
+      # metal), not "linux-gnu": kernel modules don't link against a
+      # target libc, so the GNU/Linux-targeted toolchain isn't needed.
+      - name: Install cross toolchain (Linaro GCC 4.9.4 - for pre-GCC6-era trees)
+        if: matrix.toolchain == 'linaro-4.9'
         run: |
-          curl -fsSL -o /tmp/linaro.tar.xz \
-            https://releases.linaro.org/components/toolchain/binaries/latest-7/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
-          mkdir -p /opt/linaro
-          tar -xf /tmp/linaro.tar.xz -C /opt/linaro --strip-components=1
-          echo "/opt/linaro/bin" >> "$GITHUB_PATH"
-          echo "CROSS_COMPILE_BIN=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+          git clone --depth 1 -b linaro \
+            https://github.com/GrowtopiaJaw/aarch64-linux-android-4.9.git /opt/linaro49
+          echo "/opt/linaro49/bin" >> "$GITHUB_PATH"
+          echo "CROSS_COMPILE_BIN=aarch64-elf-" >> "$GITHUB_ENV"
 
       - name: Configure target kernel (${{ matrix.defconfig }})
         working-directory: target-kernel
         run: |
-          make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build ${{ matrix.defconfig }}
+          make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build HOSTCFLAGS="-fcommon" ${{ matrix.defconfig }}
 
+      # HOSTCFLAGS=-fcommon: modules_prepare builds several HOST-side
+      # tools (scripts/dtc in particular) using the runner's own GCC,
+      # not the cross toolchain. GCC 10+ defaults to -fno-common, which
+      # breaks old dtc sources that rely on old-style "tentative
+      # definition" merging across translation units ("multiple
+      # definition of `yylloc'"). This is a build-host compiler default
+      # change, unrelated to our target toolchain choice above - needed
+      # for both matrix legs, found while reproducing the v3.18 build
+      # locally.
       - name: modules_prepare (generates headers our module builds against)
         working-directory: target-kernel
         run: |
-          make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build modules_prepare
+          make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build HOSTCFLAGS="-fcommon" modules_prepare
 
       # KBUILD_MODPOST_WARN=1: see this file's header comment - this
       # workflow never runs a full `make modules` of the whole target
@@ -160,7 +176,7 @@ jobs:
         run: |
           make -C target-kernel O=$PWD/build M=$PWD/kernel ARCH=arm64 \
             CROSS_COMPILE=${CROSS_COMPILE_BIN} KBUILD_MODPOST_WARN=1 \
-            modules 2>&1 | tee build.log
+            HOSTCFLAGS="-fcommon" modules 2>&1 | tee build.log
 
       # NOTE: su_core.ko lands in kernel/ itself (the M= directory), NOT
       # under build/kernel/ - the O= output dir only applies to the

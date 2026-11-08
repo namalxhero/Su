@@ -31,13 +31,19 @@
 
 #include <linux/kernel.h>
 #include <linux/sched.h>
-#include <linux/sched/task.h>
 #include <linux/slab.h>
 #include <linux/nsproxy.h>
 #include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/task_work.h>
 #include <linux/version.h>
+#include <linux/err.h>
+#include <linux/fs.h>
+/* See su_hook.c's identical comment: linux/sched/task.h only exists
+ * from ~v4.11 onward, must come after linux/version.h is available. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#include <linux/sched/task.h>
+#endif
 #include "include/su_common.h"
 
 /*

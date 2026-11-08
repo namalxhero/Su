@@ -30,7 +30,27 @@
 #include <linux/dirent.h>
 #include <linux/file.h>
 #include <linux/fs.h>
+#include <linux/version.h>
 #include "include/su_common.h"
+
+/* strscpy() was added in v4.3; older trees (e.g. Samsung's 3.18-based
+ * Exynos kernels) only have strlcpy(). Both guarantee NUL-termination
+ * within the given size, which is all this file relies on. */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
+#define su_strscpy(dst, src, size) strlcpy((dst), (src), (size))
+#else
+#define su_strscpy(dst, src, size) strscpy((dst), (src), (size))
+#endif
+
+/* regs_set_return_value() (the generic pt_regs setter) is a fairly
+ * recent addition; older trees have no setter at all, only
+ * regs_return_value() for reading. On arm64, the return value is
+ * regs->regs[0] - set it directly on those trees. */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+#define su_regs_set_return_value(regs, val) do { (regs)->regs[0] = (val); } while (0)
+#else
+#define su_regs_set_return_value(regs, val) regs_set_return_value((regs), (val))
+#endif
 
 #define SU_HIDE_MAX_PATHS 32
 #define SU_HIDE_PATH_MAX 256
@@ -58,7 +78,7 @@ int su_hide_add_path(const char *path, bool subtree)
 	spin_lock_irqsave(&hidden_paths_lock, flags);
 	if (hidden_path_count < SU_HIDE_MAX_PATHS) {
 		struct su_hidden_path *h = &hidden_paths[hidden_path_count];
-		strscpy(h->path, path, SU_HIDE_PATH_MAX);
+		su_strscpy(h->path, path, SU_HIDE_PATH_MAX);
 		h->subtree = subtree;
 		hidden_path_count++;
 		ret = 0;
@@ -213,7 +233,7 @@ static int su_statx_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 	struct su_statx_probe_data *data = (struct su_statx_probe_data *)ri->data;
 
 	if (data->hide)
-		regs_set_return_value(regs, (unsigned long)-ENOENT);
+		su_regs_set_return_value(regs, (unsigned long)-ENOENT);
 
 	return 0;
 }
@@ -254,7 +274,7 @@ static int su_getdents_entry(struct kretprobe_instance *ri, struct pt_regs *regs
 
 	resolved = d_path(&f->f_path, pathbuf, sizeof(pathbuf));
 	if (!IS_ERR(resolved)) {
-		strscpy(data->dir_path, resolved, SU_HIDE_PATH_MAX);
+		su_strscpy(data->dir_path, resolved, SU_HIDE_PATH_MAX);
 		data->dir_has_hidden_children = su_hide_dir_may_have_hidden_children(resolved);
 	} else {
 		data->dir_path[0] = '\0';
@@ -270,7 +290,6 @@ static int su_getdents_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 	struct su_getdents_probe_data *data = (struct su_getdents_probe_data *)ri->data;
 	long ret = regs_return_value(regs);
 	char *kbuf;
-	long copied;
 	long read_off = 0, write_off = 0;
 
 	if (ret <= 0 || !data->dir_has_hidden_children || data->dir_path[0] == '\0')
@@ -317,7 +336,7 @@ static int su_getdents_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 
 	if (write_off != ret) {
 		if (copy_to_user(data->dirent_buf, kbuf, write_off) == 0)
-			regs_set_return_value(regs, (unsigned long)write_off);
+			su_regs_set_return_value(regs, (unsigned long)write_off);
 		/* a copy_to_user failure here is left as-is (unfiltered
 		 * listing) rather than risking a half-written user buffer
 		 * with a mismatched return length. */
