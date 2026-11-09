@@ -7,14 +7,19 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-val SuGreen = Color(0xFF00E676)
-val SuGreenDim = Color(0xFF00C853)
+// "Ghostly" palette - read directly off the Ghostly design reference
+// (mint-green accent on near-pure black, pill-shaped glass cards)
+// rather than the earlier neon-green "liquid glass" look.
+val SuGreen = Color(0xFF34D399)
+val SuGreenDim = Color(0xFF22B37D)
+val SuGreenMuted = Color(0x2E34D399) // rgba(52,211,153,0.18) - badge/chip fills
 val SuBlack = Color(0xFF000000)
-val SuSurface = Color(0xFF0D0D0D)
-val SuSurfaceVariant = Color(0xFF161616)
-val SuRed = Color(0xFFFF5252)
-val SuWhite = Color(0xFFF5F5F5)
-val SuGrey = Color(0xFF9E9E9E)
+val SuSurface = Color(0xFF0A0A0A)
+val SuSurfaceVariant = Color(0xFF141414)
+val SuRed = Color(0xFFFF8A80)
+val SuWhite = Color(0xFFFFFFFF)
+val SuGrey = Color(0xFF9A9AA6)
+val SuGreyDim = Color(0xFF8D8D97)
 
 private val SuDarkColors = darkColorScheme(
     primary = SuGreen,

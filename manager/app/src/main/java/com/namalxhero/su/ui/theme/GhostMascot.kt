@@ -20,16 +20,21 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Su's own mascot - a small ghost, not a copy of any other root
- * manager's character. Entirely Canvas-drawn (no image/vector asset),
- * so its colour follows app state directly instead of needing separate
- * light/dark or status-coloured art files.
+ * manager's character. Entirely Canvas-drawn (no image/vector asset).
+ *
+ * Matches the Ghostly reference's mascot: the ghost body itself stays
+ * a neutral off-white/grey in every state (the reference's ghost never
+ * recolours - status is read from the glow halo and from text/badges
+ * elsewhere, e.g. the green checkmark next to "Root Access"), while a
+ * soft coloured glow behind it still carries [state] at a glance.
  *
  * "Live" / idle-animated per the redesign ask: gently floats up and
  * down on an infinite loop, and its glow pulses - cheap, GPU-light
  * animation (two interpolated floats), not a sprite/frame animation.
  *
- * @param state drives both colour and (loosely) "expression" - a flat
- * mouth when [GhostState.WORKING], a small worried "o" mouth otherwise.
+ * @param state drives the glow colour and (loosely) "expression" - a
+ * flat mouth when [GhostState.WORKING], a small worried "o" mouth
+ * otherwise.
  */
 enum class GhostState { WORKING, NOT_WORKING, CHECKING }
 
@@ -55,7 +60,10 @@ fun GhostMascot(state: GhostState, modifier: Modifier = Modifier, size: Dp = 96.
         label = "glow",
     )
 
-    val bodyColor = when (state) {
+    // Body stays neutral in every state (Ghostly reference) - only the
+    // glow halo below carries the state colour.
+    val bodyColor = SuWhite.copy(alpha = 0.92f)
+    val glowColor = when (state) {
         GhostState.WORKING -> SuGreen
         GhostState.NOT_WORKING -> SuRed
         GhostState.CHECKING -> SuGrey
@@ -73,7 +81,7 @@ fun GhostMascot(state: GhostState, modifier: Modifier = Modifier, size: Dp = 96.
         val glowCenter = Offset(w / 2f, h / 2f + bob)
         for (i in 3 downTo 1) {
             drawCircle(
-                color = bodyColor.copy(alpha = (glowPulse * 0.12f) / i),
+                color = glowColor.copy(alpha = (glowPulse * 0.12f) / i),
                 radius = (w / 2.1f) * (1f + i * 0.18f),
                 center = glowCenter,
             )

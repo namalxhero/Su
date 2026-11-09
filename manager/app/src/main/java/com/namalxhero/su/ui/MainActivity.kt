@@ -70,6 +70,7 @@ import com.namalxhero.su.ui.theme.GhostMascot
 import com.namalxhero.su.ui.theme.GhostState
 import com.namalxhero.su.ui.theme.GlassBackground
 import com.namalxhero.su.ui.theme.GlassCircle
+import com.namalxhero.su.ui.theme.GlassPill
 import com.namalxhero.su.ui.theme.GlassSurface
 import com.namalxhero.su.ui.theme.SuGreen
 import com.namalxhero.su.ui.theme.SuGrey
@@ -82,7 +83,7 @@ import java.io.File
 
 /**
  * UI/UX redesign pass: replaces the earlier flat single-style screens
- * with Su's own "liquid glass" look (GlassBackground/GlassSurface - see
+ * with Su's own "Ghostly" look (GlassBackground/GlassSurface - see
  * ui/theme/GlassComponents.kt) and an animated ghost mascot (own
  * character, not a copy of any other root manager's - see
  * ui/theme/GhostMascot.kt) as the primary working/not-working signal on
@@ -181,9 +182,8 @@ private fun AppScaffold(
         Scaffold(
             containerColor = Color.Transparent,
             bottomBar = {
-                GlassSurface(
+                GlassPill(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    cornerRadius = 28.dp,
                 ) {
                     NavigationBar(containerColor = Color.Transparent) {
                         NavigationBarItem(
@@ -246,10 +246,10 @@ private fun navItemColors() = NavigationBarItemDefaults.colors(
 )
 
 /**
- * Layout matches the uploaded design reference's Home screen: a top row
+ * Layout matches the Ghostly design reference's Home screen: a top row
  * (ghost logo badge left, two circular glass buttons right), a large
  * glass hero card for root status + device info, then a 2-column grid
- * of glass pill tiles. The reference's own grid labels (Apps, Modules,
+ * of glass tiles. The reference's own grid labels (Apps, Modules,
  * Self check, Kernel, Safe mode, Profiles) were trimmed to the four
  * that map to something this app actually does - see each tile's
  * onClick below - rather than shipping decorative tiles that go
