@@ -8,24 +8,29 @@
 # against a real build" caveat).
 #
 # IMPORTANT: this builds against plain upstream kernel.org (vanilla
-# mainline) tags, NOT any Android/device-specific kernel fork. This CI
-# exists to answer one question only - "does kernel/ compile cleanly
-# against both shapes of do_execveat_common's signature?" - not to
-# build, represent, or stand in for any real device's kernel. Building
+# mainline) tags, NOT any Android/device-specific kernel fork. Building
 # the actual flashable kernel for a specific phone (device defconfig,
 # vendor patches, this module integrated into that tree) is the END
 # USER's own job, same as it's always been - see kernel/Kbuild's and
-# ../README.md's "Integration" notes. An earlier version of this
-# workflow referenced an Android GKI tree and a Samsung Exynos device
-# fork here, which wrongly implied this project does device-specific
-# kernel building; it doesn't, and shouldn't.
+# ../README.md's "Integration" notes.
 #
-# do_execveat_common() is itself upstream (introduced for the
-# execveat() syscall, ~v3.19), not Android-specific, so vanilla tags on
-# either side of that are a clean, device-agnostic way to exercise both
-# SU_EXECVE_HAS_FD_ARG branches (see kernel/Kbuild):
-#   - v3.18:  pre-execveat - no `fd` argument
-#   - v6.6:   has the `int fd` argument
+# DEEP-KERNEL REWORK: this matrix originally existed specifically to
+# exercise both branches of a do_execveat_common() argument-layout
+# detection (SU_EXECVE_HAS_FD_ARG) that su_hook.c no longer has - it
+# hooks the kernel's own sched_process_exec tracepoint now, whose
+# signature doesn't vary across these kernel versions, so there is
+# nothing version-specific left to detect. The two-tree matrix (old vs.
+# new kernel) stays anyway: it's still a real, useful compile check
+# against genuinely different kernel API surfaces (the GCC-version and
+# header-split issues documented below were found THIS way, independent
+# of the now-removed fd-arg logic), and confirms
+# register_trace_sched_process_exec()/<trace/events/sched.h> actually
+# resolves on both a 2014-era tree and a modern one - not assumed.
+# CONFIG_SU_CORE=m is now passed explicitly on the build command line
+# (see that step) since kernel/Kbuild uses obj-$(CONFIG_SU_CORE), and
+# neither target tree's own .config knows about this project's Kconfig
+# symbol - see kernel/Kconfig's own header comment for why that's
+# expected, not a bug.
 #
 # FIRST REAL RUN RESULTS (reproduced locally, not just in CI, before this
 # fix): both matrix legs failed, for two unrelated reasons that this
@@ -39,17 +44,11 @@
 #     not a bug in kernel/ itself. Fixed by using an older prebuilt
 #     cross-toolchain (Linaro 7.5.0) for this leg only, instead of
 #     fighting GCC13 compatibility in a 2014 kernel tree.
-#   - vanilla-v6.6: kernel/Kbuild's do_execveat_common() detection used
-#     an inline `$(shell grep -E "...(...)..." ...)` whose regex's own
-#     literal parens broke GNU Make's paren-counting for the enclosing
-#     $(shell ...)/ifeq(...) call ("invalid syntax in conditional") -
-#     fixed by moving that regex into kernel/scripts/detect-execve-fd-arg.sh,
-#     which Kbuild now calls by path (no parens in a path). Once that
-#     was fixed, two more issues surfaced in actual compilation:
+#   - vanilla-v6.6: two issues surfaced in actual compilation:
 #     su_allowlist.c used a macro that doesn't exist (`DEFINE_WAIT_QUEUE_HEAD`
 #     - the real one is `DECLARE_WAIT_QUEUE_HEAD`) and was missing
 #     `<linux/sched.h>`; su_hide.c used fget()/fput() without
-#     `<linux/file.h>`. All three are now fixed in kernel/*.c directly.
+#     `<linux/file.h>`. Both are now fixed in kernel/*.c directly.
 #
 # Both legs also hit the same build-infra issue once the code itself
 # compiled: modpost errors on every kernel-internal symbol (printk,
@@ -62,9 +61,9 @@
 # versions recorded without a full build it can't afford to do for a
 # "does this still compile" check. KBUILD_MODPOST_WARN=1 downgrades
 # that from a hard error to a warning, which is the right tradeoff for
-# this workflow's own stated goal (compiles cleanly against both API
-# shapes) - it is NOT appropriate for an actual flashable-kernel build,
-# which goes through a full tree build and has no such gap.
+# this workflow's own stated goal (compiles cleanly on both trees) - it
+# is NOT appropriate for an actual flashable-kernel build, which goes
+# through a full tree build and has no such gap.
 
 name: Kernel module build check
 
@@ -100,7 +99,6 @@ jobs:
             # Generic in-tree arm64 defconfig that ships with vanilla
             # upstream - not any device's own defconfig.
             defconfig: defconfig
-            expect_fd_arg: "false"
             # v3.18 (2014) does not compile with the apt-provided GCC
             # 13 cross-compiler on current runners - see this file's
             # header comment. Use a period-appropriate prebuilt
@@ -110,7 +108,6 @@ jobs:
             kernel_repo: torvalds/linux
             kernel_ref: v6.6
             defconfig: defconfig
-            expect_fd_arg: "true"
             toolchain: apt
 
     steps:
@@ -139,19 +136,11 @@ jobs:
       # Pre-GCC6-era trees (v3.18 here) need an actually old compiler -
       # see this file's header comment on compiler-gcc.h.
       #
-      # Tried, in order, before landing here: (1) releases.linaro.org's
-      # official GCC 7.5.0 download - that domain no longer
-      # resolves/serves at all, dead; (2) GCC 7.5.0 from a GitHub
-      # mirror - downloads fine, but still too new: v3.18's
-      # compiler-gcc.h only has gcc3/4/5 compat headers, so GCC 7
-      # hits the exact same "linux/compiler-gcc7.h: No such file"
-      # error as the system's GCC 13 did, just one version later.
-      # GCC 4.9 is what actually compiles v3.18 - confirmed by
-      # building su_core.ko against real v3.18 sources end-to-end
-      # with this exact toolchain before this workflow was written
-      # this way. "elf" (bare metal), not "linux-gnu": kernel modules
-      # don't link against a target libc, so the GNU/Linux-targeted
-      # toolchain isn't needed.
+      # GCC 4.9 is what actually compiles v3.18 - confirmed by building
+      # su_core.ko against real v3.18 sources end-to-end with this exact
+      # toolchain before this workflow was written this way. "elf" (bare
+      # metal), not "linux-gnu": kernel modules don't link against a
+      # target libc, so the GNU/Linux-targeted toolchain isn't needed.
       - name: Install cross toolchain (Linaro GCC 4.9.4 - for pre-GCC6-era trees)
         if: matrix.toolchain == 'linaro-4.9'
         run: |
@@ -182,6 +171,13 @@ jobs:
         run: |
           make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build HOSTCFLAGS="-fcommon" modules_prepare 2>&1 | tee "${RUNNER_TEMP}/prepare.log"
 
+      # CONFIG_SU_CORE=m: kernel/Kbuild gates on obj-$(CONFIG_SU_CORE)
+      # (see kernel/Kconfig) - passed directly on the command line since
+      # neither target tree's own .config (vanilla upstream, no
+      # knowledge of this project's Kconfig symbol) would otherwise
+      # define it, which would make obj-$(CONFIG_SU_CORE) expand to
+      # nothing and silently skip building su_core.o entirely.
+      #
       # KBUILD_MODPOST_WARN=1: see this file's header comment - this
       # workflow never runs a full `make modules` of the whole target
       # tree (too slow to do twice per push), so Module.symvers never
@@ -193,7 +189,7 @@ jobs:
         run: |
           make -C target-kernel O=$PWD/build M=$PWD/kernel ARCH=arm64 \
             CROSS_COMPILE=${CROSS_COMPILE_BIN} KBUILD_MODPOST_WARN=1 \
-            HOSTCFLAGS="-fcommon" modules 2>&1 | tee build.log
+            CONFIG_SU_CORE=m HOSTCFLAGS="-fcommon" modules 2>&1 | tee build.log
 
       - name: Report build errors as a commit comment
         if: failure()
@@ -219,27 +215,30 @@ jobs:
       # *target kernel tree's* own build artifacts (set during configure
       # and modules_prepare above); the external module build (M=$PWD/kernel,
       # no O= override) drops its .ko alongside the module's own sources.
-      # Verified by actually building both matrix legs locally, not
-      # assumed - an earlier version of this workflow checked
-      # build/kernel/su_core.ko here and always reported "not found",
-      # even on a leg whose compile had genuinely succeeded.
       - name: Confirm su_core.ko was produced
         run: |
           find kernel -name 'su_core.ko' -print -quit | grep -q . \
             || { echo "::error::su_core.ko not found - build did not actually succeed"; exit 1; }
 
-      - name: Confirm the correct SU_EXECVE_HAS_FD_ARG branch was taken
+      - name: Confirm sched_process_exec tracepoint hook built in (not silently skipped)
         run: |
-          # kernel/Kbuild prints one of these two $(info ...) lines at
-          # configure time (see that file) - cross-check it against
-          # what this matrix entry's tree is supposed to have, so a
-          # silently-wrong detection doesn't slip through as a "pass".
-          if [ "${{ matrix.expect_fd_arg }}" = "true" ]; then
-            grep -q "has fd arg" build.log \
-              || { echo "::error::expected SU_EXECVE_HAS_FD_ARG to be set for ${{ matrix.name }}, but Kbuild did not detect it"; exit 1; }
-          else
-            grep -q "has no fd arg" build.log \
-              || { echo "::error::expected SU_EXECVE_HAS_FD_ARG to be UNSET for ${{ matrix.name }}, but Kbuild detected the fd-arg variant"; exit 1; }
+          # The old fd-arg-branch check this replaced verified Kbuild's
+          # $(info ...) output; there's no equivalent info line to check
+          # anymore (nothing left to detect - see this file's header
+          # comment), so instead confirm a reference to the tracepoint
+          # actually made it into the built module. register_trace_sched_process_exec()
+          # itself is a static-inline wrapper (generated by the
+          # DECLARE_TRACE macro) and gets inlined at su_hook.c's call
+          # site rather than appearing as its own symbol - what should
+          # show up in `nm`'s undefined-symbol list instead is what that
+          # inline body actually calls through to: tracepoint_probe_register
+          # and/or the exported __tracepoint_sched_process_exec symbol
+          # it registers against. Checked for either, since which one is
+          # visible can depend on inlining/optimisation choices this
+          # hasn't been run against a real build to confirm.
+          if ! nm kernel/su_core.ko 2>/dev/null | grep -qE "tracepoint_probe_register|__tracepoint_sched_process_exec"; then
+            echo "::error::su_core.ko shows no reference to tracepoint_probe_register or __tracepoint_sched_process_exec - su_hook.c's tracepoint registration may not have been compiled in (or this check's symbol-name assumption needs revisiting - see this step's own comment)"
+            exit 1
           fi
 
       - name: Report compiler warnings (non-fatal)

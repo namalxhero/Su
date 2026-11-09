@@ -1,53 +1,58 @@
 /*
- * su_hook.c - Hook framework + execve interception.
+ * su_hook.c - execve interception.
  *
- * Hook point: do_execveat_common(), via kprobe (register_kprobe() matched
- * by symbol name - no kernel source patch needed on trees where the
- * symbol is visible to kallsyms).
+ * DEEP-KERNEL REWORK: this file used to hook do_execveat_common() via
+ * kprobe, with kernel/Kbuild grepping the target tree's fs/exec.c at
+ * build time to figure out whether that function takes an `int fd`
+ * first argument (most 4.x+ trees) or not (e.g. Samsung's 3.18-based
+ * Exynos kernels) - see git history / docs/PHASE2 for that approach and
+ * why it existed.
  *
- * FIX (Phase 2 review, #1 - critical): the previous version called
- * commit_creds(prepare_kernel_cred(...)) directly inside the kprobe
- * pre_handler. Kprobe handlers run with preemption disabled, and
- * prepare_kernel_cred() allocates from cred_jar with GFP_KERNEL, which
- * is allowed to sleep. Sleeping with preemption disabled is a real
- * "scheduling while atomic" bug - it mostly "works" under light memory
- * pressure and then warns/panics under load.
+ * That entire problem class is now GONE: this hooks the kernel's own
+ * `sched_process_exec` tracepoint instead (register_trace_sched_process_exec(),
+ * declared via <trace/events/sched.h>, EXPORT_SYMBOL_GPL'd - our module
+ * is GPL-licensed, so this links fine). It is:
+ *   - stable API: TP_PROTO(struct task_struct *p, pid_t old_pid, struct
+ *     linux_binprm *bprm) has not changed shape across the kernel
+ *     versions this project targets (the tracepoint itself predates
+ *     3.18 by a wide margin - process tracepoints are old infrastructure).
+ *   - not register-layout-guessing: the exec path comes from
+ *     d_path(&bprm->file->f_path, ...) - a real, canonical, resolved
+ *     path, not a raw pointer pulled out of an argument register whose
+ *     position depends on a function signature that varies by tree.
+ *   - still available on every target kernel version in this project's
+ *     CI matrix (v3.18 and v6.6 both have it - CONFIG_TRACEPOINTS is
+ *     virtually always enabled on Android kernels regardless, since
+ *     ftrace/systrace depend on it).
  *
- * Fix: the pre_handler only queues a su_elevate_work via task_work_add()
- * (GFP_ATOMIC allocation - safe in kprobe context). task_work runs in
- * full process (sleepable) context on the same task right before it
- * returns to userspace - still before the exec'd image (su_client)
- * starts running, so su_client sees root creds from its first
- * instruction, but the actual prepare_kernel_cred()/commit_creds() call
- * happens somewhere it's legal to sleep.
+ * WHAT DID NOT CHANGE: tracepoint probes run with
+ * rcu_read_lock_sched_notrace() held around every registered callback -
+ * sleeping is still not allowed in the probe itself, same restriction a
+ * kprobe pre_handler has (just a different kernel mechanism enforcing
+ * it, not "preemption disabled" specifically - corrected here since the
+ * old comment's reasoning was kprobe-specific wording that no longer
+ * applies verbatim). Phase 2's task_work_add() deferral pattern for
+ * credential elevation is therefore still required and unchanged in
+ * su_do_elevate()/su_queue_elevate_current_task() below.
  *
- * FIX (Phase 2 review, #2 - critical): do_execveat_common()'s argument
- * layout is not the same across kernel trees. Most mainline-derived
- * trees (~4.x+, including GKI 2.0) pass an explicit `int fd` as the
- * first argument, so `filename` is argument #2 (regs->regs[1] on
- * arm64). Older trees (e.g. Samsung's 3.18-based Exynos kernels) have
- * no `fd` parameter, so `filename` is argument #1 (regs->regs[0]). The
- * previous version always read regs->regs[1], which on a no-fd kernel
- * reads the wrong register and casts garbage to struct filename* -
- * silent memory corruption, not a build failure. kernel/Kbuild now
- * greps the target tree's fs/exec.c and defines SU_EXECVE_HAS_FD_ARG
- * accordingly; see su_extract_exec_path() below.
+ * su_lookup_symbol()/su_resolve_kallsyms() stay in this file - they are
+ * no longer needed for OUR OWN hook (the tracepoint needs no kallsyms
+ * trick at all), but su_mount_isolate.c still depends on
+ * su_lookup_symbol() to resolve create_new_namespaces() /
+ * switch_task_namespaces() / path_umount(), which remain genuinely
+ * unexported. Moving this elsewhere was considered and skipped - it's
+ * a small, self-contained piece of code and su_mount_isolate.c already
+ * assumes su_hooks_install() (which still calls su_resolve_kallsyms()
+ * first) runs before it's needed.
  *
- * Phase 4: su_execve_pre_handler now also forwards the exec path to
- * su_boot_trigger_check() (su_boot_trigger.c) after the su-client
- * check, so the one-shot "launch sud" boot hook piggybacks on this
- * same kprobe instead of installing a second one on the same function.
- *
- * Phase 5: su_execve_pre_handler also calls su_mount_isolate_check()
- * (su_mount_isolate.c) for every execve, not just su_client calls -
- * mount-namespace isolation needs to apply to ordinary app launches
- * (that's the whole point: non-allowlisted apps shouldn't see Phase 4's
- * module mounts), not just su requests. See docs/PHASE5_DESIGN.md.
- *
- * CAVEAT: still not validated against a real build (no reference kernel
- * tree in this repo to compile against - see README "Integration").
- * Treat the task_work-based deferral and the fd-arg detection as
- * reviewed-and-believed-correct, not compile-tested.
+ * CAVEAT: still not validated against a real build - same standing
+ * caveat as the rest of this kernel tree. The register_kprobe-based
+ * version this replaces WAS validated (see
+ * .github/workflows/kernel-build.yml's header comment for the real,
+ * reproduced-locally fixes that took to get that version compiling on
+ * v3.18 and v6.6) - this tracepoint-based rewrite has not yet been run
+ * through that same CI matrix. Treat it as reviewed, not proven, until
+ * it has.
  */
 
 #include <linux/kernel.h>
@@ -66,26 +71,26 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/fs.h>
+#include <linux/binfmts.h>
+#include <linux/dcache.h>
+#include <linux/path.h>
 #include <linux/task_work.h>
 #include <linux/err.h>
+#include <trace/events/sched.h>
 #include "su_common.h"
 
 #define SU_CLIENT_PATH "/system/bin/su_client"
-#define SU_MAX_HOOKS 8
+#define SU_EXEC_PATH_BUF 512
 
-struct su_hook_entry {
-	const char *symbol;
-	struct kprobe kp;
-	bool installed;
-};
-
-static struct su_hook_entry hooks[SU_MAX_HOOKS];
-static int hook_count;
-
+/* su_lookup_symbol() is still used by this file's own
+ * su_resolve_kallsyms() plumbing AND by su_mount_isolate.c - kept here,
+ * see file header "su_lookup_symbol()/su_resolve_kallsyms() stay". */
 typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
 static kallsyms_lookup_name_t su_kallsyms_lookup_name;
 
-/* ---- deferred elevation (fix #1) ---- */
+static bool su_tracepoint_registered;
+
+/* ---- deferred elevation (Phase 2 fix #1, unchanged) ---- */
 
 struct su_elevate_work {
 	struct callback_head twork; /* must be first: task_work_add() takes
@@ -118,8 +123,8 @@ static void su_do_elevate(struct callback_head *twork)
 	kfree(work);
 }
 
-/* Called from kprobe context (preemption disabled) - must not sleep or
- * take non-raw spinlocks. GFP_ATOMIC does not sleep. */
+/* Called from the tracepoint probe context (rcu_read_lock_sched held) -
+ * must not sleep. GFP_ATOMIC does not sleep. */
 static void su_queue_elevate_current_task(void)
 {
 	struct su_elevate_work *work = kmalloc(sizeof(*work), GFP_ATOMIC);
@@ -142,7 +147,7 @@ static void su_queue_elevate_current_task(void)
 	}
 }
 
-/* ---- symbol resolution ---- */
+/* ---- symbol resolution (still needed by su_mount_isolate.c) ---- */
 
 static int su_resolve_kallsyms(void)
 {
@@ -166,13 +171,6 @@ static int su_resolve_kallsyms(void)
 	return 0;
 }
 
-/*
- * FIX (Phase 2 review, #4): previously resolved and never used anywhere
- * (dead code left over from an incomplete integration). Now exposed so
- * future hook backends (syscall-table patch, manual source hook for
- * kernels where kprobes on static symbols aren't visible) can resolve
- * symbols the same way instead of each reimplementing the kprobe trick.
- */
 unsigned long su_lookup_symbol(const char *name)
 {
 	if (!su_kallsyms_lookup_name)
@@ -180,79 +178,34 @@ unsigned long su_lookup_symbol(const char *name)
 	return su_kallsyms_lookup_name(name);
 }
 
-static int su_register_hook(const char *symbol, kprobe_pre_handler_t pre)
-{
-	struct su_hook_entry *h;
-	int ret;
-
-	if (hook_count >= SU_MAX_HOOKS)
-		return -ENOSPC;
-
-	h = &hooks[hook_count];
-	memset(&h->kp, 0, sizeof(h->kp));
-	h->symbol = symbol;
-	h->kp.symbol_name = symbol;
-	h->kp.pre_handler = pre;
-
-	ret = register_kprobe(&h->kp);
-	if (ret < 0) {
-		su_err("failed to hook '%s' (ret=%d)\n", symbol, ret);
-		return ret;
-	}
-
-	h->installed = true;
-	hook_count++;
-	su_log("hooked '%s' at %px\n", symbol, h->kp.addr);
-	return 0;
-}
-
-static void su_unregister_all_hooks(void)
-{
-	int i;
-
-	for (i = 0; i < hook_count; i++) {
-		if (hooks[i].installed) {
-			unregister_kprobe(&hooks[i].kp);
-			hooks[i].installed = false;
-		}
-	}
-	hook_count = 0;
-}
-
 /*
- * Returns the execve target path for this call, or NULL if it can't be
- * read (bad/error pointer). Shared by the su-client check and (Phase 4)
- * the boot-trigger check below, instead of each re-deriving it from
- * regs with its own copy of the SU_EXECVE_HAS_FD_ARG logic.
+ * The tracepoint probe itself. Signature matches
+ * TP_PROTO(struct task_struct *p, pid_t old_pid, struct linux_binprm *bprm)
+ * from include/trace/events/sched.h's sched_process_exec event - `data`
+ * is the opaque pointer passed to register_trace_sched_process_exec()
+ * (unused here, we pass NULL at registration).
+ *
+ * Fires from begin_new_exec()/setup_new_exec() in fs/exec.c, AFTER the
+ * new executable has been opened and bound to bprm->file - so
+ * bprm->file->f_path is valid and d_path() gives a real, resolved,
+ * canonical path. `p` is the exec'ing task itself (== current, since
+ * this fires synchronously in that task's own exec path), so
+ * current_uid() below is correct without needing `p` explicitly.
  */
-static const char *su_extract_exec_path(struct pt_regs *regs)
+static void su_exec_probe(void *data, struct task_struct *p, pid_t old_pid,
+			   struct linux_binprm *bprm)
 {
-#ifdef CONFIG_ARM64
-	struct filename *fname;
-
-#ifdef SU_EXECVE_HAS_FD_ARG
-	fname = (struct filename *)regs->regs[1];
-#else
-	fname = (struct filename *)regs->regs[0];
-#endif
-
-	if (!fname || IS_ERR(fname) || !fname->name)
-		return NULL;
-
-	return fname->name;
-#else
-#error "su_hook.c's register-based argument extraction is arm64-only for now."
-#endif
-}
-
-static int su_execve_pre_handler(struct kprobe *kp, struct pt_regs *regs)
-{
-	const char *exec_path = su_extract_exec_path(regs);
+	char pathbuf[SU_EXEC_PATH_BUF];
+	char *exec_path;
 	uid_t uid;
 	u32 flags;
 
-	if (!exec_path)
-		return 0;
+	if (!bprm || !bprm->file)
+		return;
+
+	exec_path = d_path(&bprm->file->f_path, pathbuf, sizeof(pathbuf));
+	if (IS_ERR(exec_path))
+		return;
 
 	/* Phase 4: one-shot boot hook, independent of the su-client check
 	 * below (an exec_path can only match one of the two, but both
@@ -270,7 +223,7 @@ static int su_execve_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 	su_mount_isolate_check(uid);
 
 	if (strcmp(exec_path, SU_CLIENT_PATH) != 0)
-		return 0;
+		return;
 
 	if (su_allowlist_check(uid, &flags)) {
 		su_log("uid=%u has grant (flags=0x%x), queuing elevation\n", uid, flags);
@@ -279,8 +232,6 @@ static int su_execve_pre_handler(struct kprobe *kp, struct pt_regs *regs)
 		su_log("uid=%u not in allowlist, denying + notifying daemon\n", uid);
 		su_notify_unknown_uid(uid);
 	}
-
-	return 0;
 }
 
 int su_hooks_install(void)
@@ -291,18 +242,35 @@ int su_hooks_install(void)
 		return ret;
 
 	/*
-	 * do_execveat_common is the native (64-bit) execve path. On most
-	 * trees the compat (32-bit app) syscall entry funnels into this
-	 * same C function, so one hook should cover both - but this is not
-	 * validated against every tree's compat path (fix #5 flagged this
-	 * as a known gap). If 32-bit su_client calls aren't being caught on
-	 * a given device, the compat execve path is the first place to
-	 * check.
+	 * sched_process_exec covers both native and compat (32-bit app)
+	 * execve - it fires from the shared begin_new_exec() path both
+	 * syscall entries funnel into, unlike the old do_execveat_common
+	 * kprobe whose compat coverage was an unvalidated assumption (see
+	 * git history's Phase 2 fix #5). Still worth confirming on a real
+	 * 32-bit-capable device rather than treating this as settled.
 	 */
-	return su_register_hook("do_execveat_common", su_execve_pre_handler);
+	ret = register_trace_sched_process_exec(su_exec_probe, NULL);
+	if (ret < 0) {
+		su_err("failed to register sched_process_exec probe (ret=%d)\n", ret);
+		return ret;
+	}
+
+	su_tracepoint_registered = true;
+	su_log("hooked sched_process_exec tracepoint\n");
+	return 0;
 }
 
 void su_hooks_uninstall(void)
 {
-	su_unregister_all_hooks();
+	if (!su_tracepoint_registered)
+		return;
+
+	unregister_trace_sched_process_exec(su_exec_probe, NULL);
+	/* Ensures no in-flight probe callback is still running on another
+	 * CPU before the module's code is unmapped - without this,
+	 * module_exit() could return (and the kernel could unload/free
+	 * su_exec_probe's code) while another CPU is mid-callback,
+	 * executing freed memory. */
+	tracepoint_synchronize_unregister();
+	su_tracepoint_registered = false;
 }

@@ -4,14 +4,20 @@
 # be placed under a kernel source tree's `drivers/` (or similar) directory,
 # referenced from that tree's top-level Kbuild/Makefile, and built as part
 # of a normal Android kernel build (bazel/build.sh or the legacy
-# build/build.sh flow). See ../README.md "Integration" section.
+# build/build.sh flow). See ../README.md "Integration" section and
+# ../Kconfig for the CONFIG_SU_CORE tristate (module vs. built-in).
 #
-# Previously assumed GKI 2.0 (5.10+) only. After the Phase 2 review fixes,
-# do_execveat_common()'s argument layout is detected below instead of
-# assumed, so this also targets older trees (e.g. 3.18-based Exynos
-# kernels) - see su_hook.c's SU_EXECVE_HAS_FD_ARG usage.
+# DEEP-KERNEL REWORK: the do_execveat_common() argument-layout detection
+# that used to live here (SU_EXECVE_HAS_FD_ARG, via
+# scripts/detect-execve-fd-arg.sh) is GONE. su_hook.c no longer hooks
+# do_execveat_common() at all - it subscribes to the kernel's own
+# sched_process_exec tracepoint instead, whose signature is stable
+# across every kernel version this project targets, so there is nothing
+# left for this file to detect. See su_hook.c's own header comment for
+# the full rationale. scripts/detect-execve-fd-arg.sh is now dead and
+# has been removed along with the ifeq block that called it.
 
-obj-m += su_core.o
+obj-$(CONFIG_SU_CORE) += su_core.o
 
 su_core-objs := \
 	su_main.o \
@@ -23,22 +29,3 @@ su_core-objs := \
 	su_mount_isolate.o
 
 ccflags-y += -I$(src)/include -Wall
-
-# Detect do_execveat_common()'s signature in the target kernel tree: trees
-# derived from mainline ~4.x+ (including GKI 2.0) pass an explicit `int fd`
-# as the first argument; older trees (e.g. Samsung's 3.18-based Exynos
-# kernels - see do_execve_common() in fs/exec.c) do not, so `filename` is
-# argument #1 instead of #2. Getting this wrong means su_hook.c reads the
-# wrong register as a struct filename* - silent memory corruption, not a
-# build failure, so this check matters more than it looks.
-# The detection logic itself lives in a standalone shell script, not
-# inline here - see that script's own comment for why: an earlier
-# inline $(shell grep ...) version broke Kbuild's own "ifeq" parsing
-# because GNU Make counts the regex's literal parens as part of the
-# $(shell ...) call's own syntax.
-ifeq ($(shell $(CONFIG_SHELL) $(src)/scripts/detect-execve-fd-arg.sh $(srctree)/fs/exec.c),1)
-ccflags-y += -DSU_EXECVE_HAS_FD_ARG
-$(info -- su_core: do_execveat_common has fd arg, using regs->regs[1] for struct filename*)
-else
-$(info -- su_core: do_execveat_common has no fd arg (older tree), using regs->regs[0] for struct filename*)
-endif

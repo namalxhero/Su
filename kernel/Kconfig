@@ -1,0 +1,32 @@
+# kernel/Kconfig - sourced from a target kernel tree's own Kconfig (e.g.
+# drivers/Kconfig: `source "drivers/su_core/Kconfig"` once kernel/ is
+# placed there - see ../README.md "Integration"). NOT auto-sourced by
+# a vanilla/unmodified kernel tree - this is why this project's CI
+# (.github/workflows/kernel-build.yml) passes CONFIG_SU_CORE=m directly
+# on the `make` command line instead of relying on this file being
+# wired into a vanilla torvalds/linux checkout's own Kconfig tree.
+
+config SU_CORE
+	tristate "Su root kernel module"
+	depends on ARM64
+	default m
+	help
+	  Kernel-side support for this project's su mechanism, Magisk-
+	  compatible module (OverlayFS) loading, and allowlist-based
+	  visibility control. See docs/ in the project root for the full
+	  design.
+
+	  Say M here (the default) to build as a loadable module - the
+	  normal choice for fast iteration during development, and the
+	  only option on devices that support loadable kernel modules at
+	  all.
+
+	  Say Y to build in (not as a loadable module) - required on
+	  devices where loadable modules aren't viable (CONFIG_MODULES
+	  disabled in the target kernel, or module-loading signature
+	  enforcement that only accepts OEM-signed .ko files). This is
+	  what tools/boot_patch/ (see docs/PHASE7_DESIGN.md) exists to get
+	  onto a device's boot partition - Y here is a prerequisite for
+	  that tool to have anything meaningful to patch in.
+
+	  Say N to exclude entirely.
