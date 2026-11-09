@@ -221,7 +221,22 @@ jobs:
             sed -i "/^# CONFIG_${opt} is not set\$/d; /^CONFIG_${opt}=/d" "$CONFIG_FILE"
             echo "CONFIG_${opt}=y" >> "$CONFIG_FILE"
           done
+          # `set -o pipefail` (this step's own `set -euo pipefail` above)
+          # makes the pipeline's exit status reflect EVERY command in
+          # it, not just the last - but `yes` is SUPPOSED to get
+          # SIGPIPE/exit non-zero here, the instant `make oldconfig`
+          # stops reading (finishes) while `yes` is still writing;
+          # that is just how this well-known `yes | make oldconfig`
+          # idiom ends, not a real failure. (First real CI run of this
+          # step hit exactly this: "yes: standard output: Broken pipe"
+          # failed the step even though `make oldconfig` itself had
+          # already finished successfully.) Scoped off here rather
+          # than dropped for the whole script, so a genuine failure
+          # from `make oldconfig` itself still fails this step - only
+          # `yes`'s expected broken-pipe exit is what's ignored.
+          set +o pipefail
           yes "" | make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build HOSTCFLAGS="-fcommon" oldconfig
+          set -o pipefail
           grep -q '^CONFIG_TRACEPOINTS=y$' ../build/.config || {
             echo "::error::CONFIG_TRACEPOINTS still not set after forcing FTRACE/FUNCTION_TRACER - this tree's select chain differs from what this step assumes, needs a real look rather than silently proceeding to build a module whose hook won't fire."
             exit 1
