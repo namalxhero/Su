@@ -64,6 +64,29 @@
 # this workflow's own stated goal (compiles cleanly on both trees) - it
 # is NOT appropriate for an actual flashable-kernel build, which goes
 # through a full tree build and has no such gap.
+#
+# SECOND REAL RUN RESULT (after the two fixes above got both legs
+# actually compiling and linking): both legs still failed, this time
+# at the later "Confirm sched_process_exec tracepoint hook built in"
+# verification step - su_core.ko compiled and linked cleanly but
+# carried no reference to tracepoint_probe_register or
+# __tracepoint_sched_process_exec at all. Root cause: CONFIG_TRACEPOINTS
+# is a prompt-less `bool` (kernel/trace/Kconfig / init/Kconfig) - it is
+# only ever turned on by something else `select`-ing it (CONFIG_TRACING,
+# itself selected by the "Tracers" menu options under CONFIG_FTRACE),
+# and generic arm64 `defconfig` selects none of those - unlike a real
+# Android/device defconfig, which always carries ftrace/systrace
+# support (see su_hook.c's own file-header comment on that assumption).
+# With CONFIG_TRACEPOINTS off, <trace/events/sched.h>'s DECLARE_TRACE
+# machinery silently expands register_trace_sched_process_exec() to a
+# no-op stub instead of a real call - the module still compiles and
+# links fine either way, it just hooks nothing, which is exactly why
+# this surfaced at the nm-based verification step and not as a build
+# error. Fixed by forcing CONFIG_FTRACE + CONFIG_FUNCTION_TRACER on
+# directly in .config (pulling TRACEPOINTS in through its real select
+# chain, rather than trying to force a prompt-less symbol directly,
+# which oldconfig would just recalculate back off) - see the
+# "Force-enable CONFIG_TRACEPOINTS" step below for the rest.
 
 name: Kernel module build check
 
@@ -156,6 +179,53 @@ jobs:
         working-directory: target-kernel
         run: |
           make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build HOSTCFLAGS="-fcommon" ${{ matrix.defconfig }}
+
+      # Root cause of the "Confirm sched_process_exec tracepoint hook
+      # built in" step's v3.18 failure (first real CI run of the
+      # deep-kernel rework): CONFIG_TRACEPOINTS is a `bool` with NO
+      # Kconfig prompt (kernel/trace/Kconfig / init/Kconfig) - it is
+      # only ever turned on by something else `select`-ing it
+      # (CONFIG_TRACING, itself selected by the various "Tracers" menu
+      # options under CONFIG_FTRACE). Generic arm64 `defconfig` (a
+      # minimal upstream vanilla config - NOT a real Android/device
+      # defconfig, which always has ftrace/systrace support baked in,
+      # per su_hook.c's own file-header comment on that assumption)
+      # does not select any of those, so CONFIG_TRACEPOINTS silently
+      # ends up OFF for this CI leg specifically. With it off,
+      # <trace/events/sched.h>'s DECLARE_TRACE machinery expands
+      # register_trace_sched_process_exec() to a no-op stub instead of
+      # a real call into tracepoint_probe_register() - su_hook.c still
+      # compiles and links cleanly either way (that's exactly why this
+      # was caught by the later nm-based verification step, not by the
+      # compiler), it just silently hooks nothing. This is a property
+      # of the generic CI config, not of su_hook.c's own code - a real
+      # device kernel build (the only kind this module is ever
+      # actually loaded into) already has this on, same as it already
+      # has FTRACE/systrace for other reasons.
+      #
+      # Fix: force CONFIG_FTRACE + CONFIG_FUNCTION_TRACER on (the
+      # oldest, most universally-present way to pull TRACEPOINTS in
+      # through its real select chain - present on every kernel
+      # version in this project's matrix, arm64 has HAVE_FUNCTION_TRACER)
+      # directly in the generated .config, then re-run `oldconfig` to
+      # let Kconfig resolve the rest of the select graph consistently
+      # (`yes ""` rather than the newer `olddefconfig` target, which
+      # may not exist on a 2014-era tree - oldconfig has been present
+      # in every version this project targets).
+      - name: Force-enable CONFIG_TRACEPOINTS (su_hook.c's hook needs it; generic defconfig doesn't select it)
+        working-directory: target-kernel
+        run: |
+          set -euo pipefail
+          CONFIG_FILE=../build/.config
+          for opt in FTRACE FUNCTION_TRACER TRACEPOINTS; do
+            sed -i "/^# CONFIG_${opt} is not set\$/d; /^CONFIG_${opt}=/d" "$CONFIG_FILE"
+            echo "CONFIG_${opt}=y" >> "$CONFIG_FILE"
+          done
+          yes "" | make ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE_BIN} O=../build HOSTCFLAGS="-fcommon" oldconfig
+          grep -q '^CONFIG_TRACEPOINTS=y$' ../build/.config || {
+            echo "::error::CONFIG_TRACEPOINTS still not set after forcing FTRACE/FUNCTION_TRACER - this tree's select chain differs from what this step assumes, needs a real look rather than silently proceeding to build a module whose hook won't fire."
+            exit 1
+          }
 
       # HOSTCFLAGS=-fcommon: this step builds several HOST-side tools
       # (scripts/dtc in particular) using the runner's own GCC, not the
