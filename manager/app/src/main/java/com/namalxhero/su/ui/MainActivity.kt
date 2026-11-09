@@ -52,7 +52,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
@@ -158,6 +157,18 @@ private fun AppScaffold(
     // (the design reference's grid includes a "Self check / Test root"
     // tile - this is what it actually does here).
     var recheckTick by remember { mutableStateOf(0) }
+    // Real count for the Home "Modules" stat card - null while loading
+    // or if su_client couldn't be reached, shown as "—" rather than a
+    // guessed 0 (ModulesScreen itself already has its own full fetch;
+    // this is just the Home-card summary number).
+    var moduleCount by remember { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(recheckTick) {
+        moduleCount = when (val r = moduleRepository.listModules()) {
+            is ModuleRepository.ListResult.Success -> r.modules.size
+            else -> null
+        }
+    }
 
     LaunchedEffect(recheckTick) {
         status = null
@@ -224,6 +235,7 @@ private fun AppScaffold(
                         status = status,
                         daemonInstalled = daemonInstalled,
                         grantedCount = granted.size,
+                        moduleCount = moduleCount,
                         onNavigate = { selected = it },
                         onRecheck = { recheckTick++ },
                     )
@@ -260,6 +272,7 @@ private fun HomeScreen(
     status: ModuleStatus?,
     daemonInstalled: Boolean?,
     grantedCount: Int,
+    moduleCount: Int?,
     onNavigate: (Destination) -> Unit,
     onRecheck: () -> Unit,
 ) {
@@ -335,38 +348,104 @@ private fun HomeScreen(
 
         Spacer(Modifier.height(14.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            GridTile(
+        Text(
+            stringResource(R.string.home_system_info),
+            style = MaterialTheme.typography.labelSmall,
+            color = SuGrey,
+            modifier = Modifier.padding(horizontal = 6.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            InfoCard(
                 modifier = Modifier.weight(1f),
-                leading = { Icon(Icons.Filled.Lock, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)) },
-                title = stringResource(R.string.home_tile_apps),
-                subtitle = stringResource(R.string.home_tile_apps_sub, grantedCount),
+                label = stringResource(R.string.home_card_daemon),
+                value = if (daemonInstalled == true)
+                    stringResource(R.string.home_value_installed) else stringResource(R.string.home_value_not_installed),
+            )
+            InfoCard(
+                modifier = Modifier.weight(1f),
+                label = stringResource(R.string.home_card_kernel),
+                value = if (status?.connected == true)
+                    stringResource(R.string.home_value_loaded) else stringResource(R.string.home_value_not_detected),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            InfoCard(
+                modifier = Modifier.weight(1f),
+                label = stringResource(R.string.home_card_hookmode),
+                // Phase 8: the kernel side moved from an execve hook to
+                // a sched_process_exec tracepoint - this label follows
+                // that, not the older mechanism.
+                value = stringResource(R.string.home_value_tracepoint),
+            )
+            InfoCard(
+                modifier = Modifier.weight(1f),
+                label = stringResource(R.string.home_card_allowlist),
+                value = if (status?.connected == true) "$grantedCount / ${status.capacity}" else "—",
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatCard(
+                modifier = Modifier.weight(1f),
+                icon = { Icon(Icons.Filled.Lock, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp)) },
+                label = stringResource(R.string.nav_superuser),
+                value = grantedCount.toString(),
                 onClick = { onNavigate(Destination.SUPERUSER) },
             )
-            GridTile(
+            StatCard(
                 modifier = Modifier.weight(1f),
-                leading = { Icon(Icons.Filled.List, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)) },
-                title = stringResource(R.string.home_tile_modules),
-                subtitle = null,
+                icon = { Icon(Icons.Filled.List, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp)) },
+                label = stringResource(R.string.nav_modules),
+                value = moduleCount?.toString() ?: "—",
                 onClick = { onNavigate(Destination.MODULES) },
             )
         }
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            GridTile(
-                modifier = Modifier.weight(1f),
-                leading = { Text("⟳", color = Color.White, style = MaterialTheme.typography.titleMedium) },
-                title = stringResource(R.string.home_tile_recheck),
-                subtitle = stringResource(R.string.home_tile_recheck_sub),
-                onClick = onRecheck,
-            )
-            GridTile(
-                modifier = Modifier.weight(1f),
-                leading = { Icon(Icons.Filled.Settings, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)) },
-                title = stringResource(R.string.home_tile_settings),
-                subtitle = stringResource(R.string.home_tile_settings_sub),
-                onClick = { onNavigate(Destination.SETTINGS) },
-            )
+    }
+}
+
+/** Small squared info card - label + value, no icon. Part of the Home
+ * "System Info" grid (daemon/kernel/hook-mode/allowlist), replacing
+ * the earlier pill-shaped GridTile for this content: a plain fact
+ * doesn't need a chevron, since it isn't navigable. */
+@Composable
+private fun InfoCard(modifier: Modifier = Modifier, label: String, value: String) {
+    GlassSurface(modifier = modifier, cornerRadius = 18.dp) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = SuGrey, maxLines = 1)
+            Spacer(Modifier.height(4.dp))
+            Text(value, style = MaterialTheme.typography.bodyMedium, color = Color.White, maxLines = 1)
+        }
+    }
+}
+
+/** Squared stat card - centered icon badge, big number, label below.
+ * Unlike InfoCard this one navigates, so it keeps a click target. */
+@Composable
+private fun StatCard(
+    modifier: Modifier = Modifier,
+    icon: @Composable () -> Unit,
+    label: String,
+    value: String,
+    onClick: () -> Unit,
+) {
+    GlassSurface(modifier = modifier.clickable(onClick = onClick), cornerRadius = 18.dp) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(Color.White.copy(alpha = 0.08f)),
+                contentAlignment = Alignment.Center,
+            ) { icon() }
+            Spacer(Modifier.height(8.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall, color = SuGrey)
+            Text(value, style = MaterialTheme.typography.titleMedium, color = Color.White)
         }
     }
 }
@@ -379,56 +458,6 @@ private fun HorizontalGlassDivider() {
             .height(1.dp)
             .background(Color.White.copy(alpha = 0.16f))
     )
-}
-
-/**
- * One 2x1 grid pill - icon badge, title + optional subtitle, chevron -
- * matches the reference's Apps/Modules/etc. tiles in shape and content
- * arrangement. `leading` is a composable slot rather than a fixed
- * ImageVector so callers can pass either a confirmed material-icons-core
- * Icon or a plain glyph (see the "⟳" self-check tile below) without
- * this function caring which - keeps GridTile itself independent of
- * which icon set a given caller can safely use.
- */
-@Composable
-private fun GridTile(
-    modifier: Modifier = Modifier,
-    leading: @Composable () -> Unit,
-    title: String,
-    subtitle: String?,
-    onClick: () -> Unit,
-) {
-    GlassSurface(modifier = modifier.clickable(onClick = onClick), cornerRadius = 30.dp) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(androidx.compose.foundation.shape.CircleShape)
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(Color.White.copy(alpha = 0.22f), Color.White.copy(alpha = 0.04f)),
-                        )
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                leading()
-            }
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White, maxLines = 1)
-                if (subtitle != null) {
-                    Text(subtitle, style = MaterialTheme.typography.labelSmall, color = SuGrey, maxLines = 1)
-                }
-            }
-            // ">" rather than an ArrowForwardIos icon - same reasoning
-            // as the "⟳" self-check button: not confirmed present in
-            // material-icons-core.
-            Text(">", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.bodyMedium)
-        }
-    }
 }
 
 @Composable
