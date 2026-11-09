@@ -78,3 +78,45 @@ wrong device) before it's written anywhere permanent.
   assumes a single combined `boot.img` containing the kernel, which is
   the shape loadable-module-incapable (typically older/non-GKI)
   devices are more likely to actually have.
+
+## `inject_ramdisk_autoload.sh` - the loadable-module case, patched into boot.img instead of vendor_dlkm
+
+This directory's other script, `patch_boot_img.sh` above, is for the
+**built-in** (`CONFIG_SU_CORE=y`) case. If your device *does* support
+loadable modules, `../module_autoload/`'s `install_vendor_dlkm.sh` is
+the simpler option - no boot.img patching or (re)flashing at all. Use
+`inject_ramdisk_autoload.sh` instead only when that doesn't fit (a
+vendor_dlkm layout that doesn't cooperate, or you'd rather have the
+autoload baked into a boot.img you flash once). See the script's own
+header comment for the full "when to use this instead" reasoning - not
+repeated twice here.
+
+It embeds `su_core.ko` directly into the boot image's own ramdisk and
+adds an `init.su_core.rc` that calls init's own built-in `insmod`
+command at `early-init` - no vendor partition write, no userspace
+daemon or boot script of this project's own needs to run at boot for
+it. Same `fastboot boot` BEFORE `fastboot flash boot` safety order as
+`patch_boot_img.sh` above applies unchanged; it shares that script's
+backup/unpack/repack plumbing and produces the same `patched_boot.img`
+output name.
+
+```
+./inject_ramdisk_autoload.sh <stock_boot.img> <su_core.ko> <output_dir>
+```
+
+Additional known gaps specific to this script (on top of the ones
+above, which both scripts share):
+
+- Ramdisk compression is auto-detected for gzip and lz4 (both legacy
+  and modern LZ4 frame magic) only - anything else (e.g. a raw/
+  uncompressed ramdisk, or zstd) isn't handled and the script fails
+  loudly rather than guessing.
+- Needs `cpio` on the machine running it (not part of this repo's
+  other dependencies) - install it if missing, the script checks and
+  says so rather than failing deep into the unpack with a confusing
+  error.
+- Same split `vendor_boot`/`boot` caveat as `patch_boot_img.sh` above:
+  only a single combined ramdisk is handled right now.
+- Assumes the ramdisk has a top-level `/init.rc` it can append an
+  `import` line to - true for every AOSP-derived ramdisk this was
+  written against, but not verified against a real OEM ramdisk yet.

@@ -43,6 +43,7 @@ decisions and `docs/PHASE3_DESIGN.md` for the manager app's status.
 | `docs/PHASE1_DESIGN.md` | Architecture decisions from the design phase |
 | `docs/PHASE3_DESIGN.md` | Manager app status and remaining gaps |
 | `tools/module_autoload/` | Makes `su_core.ko` auto-load on every boot via the GKI `vendor_dlkm`/`modules.load` mechanism - no daemon, no boot script |
+| `tools/boot_patch/inject_ramdisk_autoload.sh` | Alternative to the above: bakes `su_core.ko` + an auto-`insmod` init script directly into a patched `boot.img`, for devices where `vendor_dlkm` doesn't fit |
 
 ## Integration (draft — will be expanded once the hook point is validated)
 
@@ -55,7 +56,11 @@ decisions and `docs/PHASE3_DESIGN.md` for the manager app's status.
      `tools/module_autoload/install_vendor_dlkm.sh` once, from a root
      shell on the device. It auto-loads the module the same way every
      other vendor `.ko` on a GKI device does (`init`'s own
-     `modules.load` mechanism) - see that directory's own README.
+     `modules.load` mechanism) - see that directory's own README. If
+     `vendor_dlkm` doesn't fit your device, `tools/boot_patch/
+     inject_ramdisk_autoload.sh` does the equivalent by patching the
+     module + an auto-`insmod` init script directly into a `boot.img`
+     instead.
    - **Modules not viable at all** (`CONFIG_MODULES` disabled,
      signature-enforced module loading) - build `CONFIG_SU_CORE=y`
      (built-in) instead, and use `tools/boot_patch/` to get that
