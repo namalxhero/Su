@@ -42,14 +42,26 @@ decisions and `docs/PHASE3_DESIGN.md` for the manager app's status.
 | `manager/` | Kotlin/Compose manager app - see `manager/README.md` |
 | `docs/PHASE1_DESIGN.md` | Architecture decisions from the design phase |
 | `docs/PHASE3_DESIGN.md` | Manager app status and remaining gaps |
+| `tools/module_autoload/` | Makes `su_core.ko` auto-load on every boot via the GKI `vendor_dlkm`/`modules.load` mechanism - no daemon, no boot script |
 
 ## Integration (draft — will be expanded once the hook point is validated)
 
 1. Copy `kernel/` into your Android kernel source tree.
 2. Reference it from your tree's build config so it's built as an
    in-tree or out-of-tree module alongside your kernel.
-3. `insmod su_core.ko` after boot (or build it into the boot image —
-   TBD once Phase 2 is validated on a real device).
+3. Get `su_core.ko` loading on every boot, one of two ways depending
+   on whether your device supports loadable kernel modules at all:
+   - **Loadable (`CONFIG_SU_CORE=m`, the default)** - run
+     `tools/module_autoload/install_vendor_dlkm.sh` once, from a root
+     shell on the device. It auto-loads the module the same way every
+     other vendor `.ko` on a GKI device does (`init`'s own
+     `modules.load` mechanism) - see that directory's own README.
+   - **Modules not viable at all** (`CONFIG_MODULES` disabled,
+     signature-enforced module loading) - build `CONFIG_SU_CORE=y`
+     (built-in) instead, and use `tools/boot_patch/` to get that
+     kernel onto the device's boot partition.
+   A manual one-off `insmod su_core.ko` still works for quick testing
+   either way, it just won't survive a reboot.
 
 ## License
 

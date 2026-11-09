@@ -8,17 +8,25 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.namalxhero.su.R
+import com.namalxhero.su.daemon.AutoStartPrefs
 import com.namalxhero.su.ui.theme.GlassSurface
 import com.namalxhero.su.ui.theme.SuBlack
 import com.namalxhero.su.ui.theme.SuGreen
@@ -32,6 +40,11 @@ fun SettingsScreen(onRestartDaemon: () -> Unit) {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull() ?: "unknown"
     }
+    // Read once on first composition (BootReceiver's own read happens
+    // independently, straight from SharedPreferences, so this is just
+    // this screen's display copy) - updated both locally and in the
+    // backing prefs together on toggle, below.
+    var autoStartEnabled by remember { mutableStateOf(AutoStartPrefs.isEnabled(context)) }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(20.dp),
@@ -55,6 +68,25 @@ fun SettingsScreen(onRestartDaemon: () -> Unit) {
                 modifier = Modifier.padding(top = 10.dp),
             ) {
                 Text(stringResource(R.string.action_restart_daemon))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.settings_auto_start_label),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Switch(
+                    checked = autoStartEnabled,
+                    onCheckedChange = { enabled ->
+                        autoStartEnabled = enabled
+                        AutoStartPrefs.setEnabled(context, enabled)
+                    },
+                    colors = SwitchDefaults.colors(checkedTrackColor = SuGreen),
+                )
             }
         }
 

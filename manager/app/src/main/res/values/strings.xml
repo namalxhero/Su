@@ -70,6 +70,7 @@
     <string name="settings_version_label">Version</string>
     <string name="settings_section_module">Kernel module</string>
     <string name="settings_root_path_label">su_client path</string>
+    <string name="settings_auto_start_label">Auto-start on boot</string>
     <string name="settings_section_links">Project</string>
     <string name="settings_view_source">View source on GitHub</string>
 
