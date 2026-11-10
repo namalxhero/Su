@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 // artifact this project doesn't depend on. Lock stands in for
 // "Superuser" (root/security), List for "Modules".
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
@@ -59,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import com.namalxhero.su.R
+import com.namalxhero.su.bootpatch.BootPatcherScreen
 import com.namalxhero.su.daemon.AllowlistRepository
 import com.namalxhero.su.daemon.SuDaemonService
 import com.namalxhero.su.db.AllowlistEntry
@@ -139,6 +141,7 @@ private enum class Destination(val labelRes: Int) {
     SUPERUSER(R.string.nav_superuser),
     MODULES(R.string.nav_modules),
     SETTINGS(R.string.nav_settings),
+    PATCHER(R.string.nav_patcher),
 }
 
 data class ModuleStatus(val connected: Boolean, val apiVersion: Int, val capacity: Int)
@@ -225,6 +228,13 @@ private fun AppScaffold(
                             label = { Text(stringResource(Destination.SETTINGS.labelRes)) },
                             colors = navItemColors(),
                         )
+                        NavigationBarItem(
+                            selected = selected == Destination.PATCHER,
+                            onClick = { selected = Destination.PATCHER },
+                            icon = { Icon(Icons.Filled.Build, contentDescription = null) },
+                            label = { Text(stringResource(Destination.PATCHER.labelRes)) },
+                            colors = navItemColors(),
+                        )
                     }
                 }
             },
@@ -242,6 +252,7 @@ private fun AppScaffold(
                     Destination.SUPERUSER -> SuperuserScreen(allowlist = allowlist, granted = granted)
                     Destination.MODULES -> ModulesScreen(repository = moduleRepository)
                     Destination.SETTINGS -> SettingsScreen(onRestartDaemon = onRestartDaemon)
+                    Destination.PATCHER -> BootPatcherScreen()
                 }
             }
         }
