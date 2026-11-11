@@ -16,7 +16,7 @@ java -jar "$OUT"
 # content checks) run as separate programs - each file above defines its
 # own top-level main(), so they can't share one jar/invocation with
 # PatchCoreSelfTest.kt's main() without a name clash.
-for t in WriterSelfTest WriterSelfTestV1 InspectorV4Regression; do
+for t in WriterSelfTest WriterSelfTestV1 WriterSelfTestVendorBoot InspectorV4Regression; do
   OUT_T="${TMPDIR:-/tmp}/ghostly-${t}.jar"
   kotlinc \
     "$ROOT/manager/app/src/main/java/com/namalxhero/su/bootpatch/BootImageInspector.kt" \
